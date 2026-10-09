@@ -1,0 +1,41 @@
+# AWS testbed override for the GPU host. Applied on top of compose/docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-models.yml \
+#     --profile qwen3-large --profile embeddings --profile reranker up -d qwen3-large embed rerank
+#
+# Publishes the model servers on the host's private IP so the gateway host and the load
+# generator can reach them across the VPC. The extra `models-edge` network has IP masquerading
+# disabled, like `edge` in the base file: published ports work inbound, but the model containers
+# still have no route to the internet.
+#
+#   host port  service                         served model
+#   8000       qwen3-large | qwen3-small | qwen3-moe   (one chat pool per GPU)
+#   8001       embed                           Qwen/Qwen3-Embedding-0.6B (TEI)
+#   8002       rerank                          Qwen/Qwen3-Reranker-0.6B (vLLM pooling)
+#   8003       gpt-oss                         openai/gpt-oss-20b
+services:
+  qwen3-large:
+    networks: [backend, models-edge]
+    ports: ["${TESTBED_BIND:-0.0.0.0}:8000:8000"]
+  qwen3-small:
+    networks: [backend, models-edge]
+    ports: ["${TESTBED_BIND:-0.0.0.0}:8000:8000"]
+  qwen3-moe:
+    networks: [backend, models-edge]
+    ports: ["${TESTBED_BIND:-0.0.0.0}:8000:8000"]
+  embed:
+    networks: [backend, models-edge]
+    ports: ["${TESTBED_BIND:-0.0.0.0}:8001:8000"]
+  rerank:
+    networks: [backend, models-edge]
+    ports: ["${TESTBED_BIND:-0.0.0.0}:8002:8000"]
+  gpt-oss:
+    networks: [backend, models-edge]
+    ports: ["${TESTBED_BIND:-0.0.0.0}:8003:8000"]
+
+networks:
+  models-edge:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-caliban-mdl
+      com.docker.network.bridge.enable_ip_masquerade: "false"

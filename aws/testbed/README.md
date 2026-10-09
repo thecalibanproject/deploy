@@ -1,0 +1,447 @@
+# Caliban AWS testbed
+
+OpenTofu code for a short-lived AWS test environment in **eu-central-1 (Frankfurt)**. It runs the deploy repo's own compose stack, images and offline bundles on EC2 so that four things can be measured on real Linux hosts:
+
+- (a) the gateway overhead benchmark;
+- (b) split mode with N routers and a shared Valkey;
+- (c) the GPU open-model tier: Qwen3.8-27B-FP8 on vLLM, Qwen3-Embedding-0.6B on TEI and Qwen3-Reranker-0.6B on one L40S 48 GB;
+- (d) a zero-egress install from an offline bundle in a subnet with no route to the internet.
+
+Nothing here is production guidance. Everything is off or small by default, every host stops itself after `ttl_hours`, and `tofu destroy` removes all of it.
+
+The code holds no account ids, ARNs, IPs, keys or secrets. Account-specific values go in `terraform.tfvars`, which is git-ignored together with state and `.terraform/`.
+
+## Contents
+
+```
+aws/
+├── .gitignore                    state, tfvars, .terraform, backend.tf
+└── testbed/
+    ├── versions.tf               OpenTofu >= 1.8, pinned providers (.terraform.lock.hcl)
+    ├── providers.tf              aws provider: region, profile, optional allowed_account_ids
+    ├── variables.tf              every toggle, with defaults
+    ├── locals.tf                 host map, AZ choice, fixed IPs, vCPU accounting
+    ├── network.tf                VPC, public / private / isolated subnets, optional NAT
+    ├── endpoints.tf              S3 gateway endpoint (policy-restricted), SSM interface endpoints
+    ├── security.tf               host and endpoint security groups
+    ├── iam.tf                    instance role: AmazonSSMManagedInstanceCore + bucket read
+    ├── bucket.tf                 private bucket for bundles, tools and results
+    ├── secrets.tf                generated secrets as SSM SecureString parameters
+    ├── instances.tf              gateway, routers, loadgen, gpu (one for_each), cloud-init
+    ├── autostop.tf               EventBridge Scheduler TTL stop
+    ├── flowlogs.tf               optional VPC Flow Logs to CloudWatch Logs
+    ├── checks.tf                 quota and sanity checks at plan time
+    ├── outputs.tf                instance ids, SSM commands, bucket, TTL time
+    ├── backend.s3.tf.example     optional S3 backend
+    ├── terraform.tfvars.example
+    ├── .tflint.hcl
+    ├── tests/testbed.tftest.hcl  offline plan tests with a mocked AWS provider
+    └── bootstrap/                what cloud-init runs on the hosts
+        ├── common.sh             Docker, compose, image build or bundle load, secrets
+        ├── gateway.sh            compose stack (standalone) + testbed override
+        ├── router.sh             `caliban router` in split/snapshot mode
+        ├── loadgen.sh            Rust, the bench crate, oha
+        ├── gpu.sh                compose model profiles on the L40S
+        ├── compose.testbed-gateway.yml
+        └── compose.testbed-models.yml
+```
+
+## Topology
+
+```
+ VPC 10.42.0.0/16, one AZ (the first that offers g6e.xlarge and the CPU type)
+ ┌───────────────────────────────────────────────────────────────────────────────┐
+ │ public 10.42.0.0/24          route 0.0.0.0/0 -> internet gateway             │
+ │   hosts here: public IPv4, no inbound rule from outside the VPC              │
+ │                                                                               │
+ │ private 10.42.1.0/24         route 0.0.0.0/0 -> NAT only if enable_nat_gateway│
+ │                                                                               │
+ │ isolated 10.42.2.0/24        no internet route, ever                          │
+ │   ssm, ssmmessages, ec2messages interface endpoints (private DNS)            │
+ │   S3 gateway endpoint (also on the private route table)                      │
+ └───────────────────────────────────────────────────────────────────────────────┘
+
+ Hosts go in the tier given by network_mode (per role with role_network_mode),
+ at fixed addresses in that /24:
+   .10  gateway   Caliban standalone + Postgres + Valkey + Qdrant (compose)
+   .20  gpu       vLLM / TEI model servers (compose profiles), ports 8000-8003
+   .30  loadgen   bench load generator
+   .40+ router-N  caliban router --control-plane-url http://<gateway>:8081
+```
+
+Access is **SSM Session Manager only**. There is no key pair, no SSH and no inbound port open to `0.0.0.0/0`. Security groups admit the service ports (8080, 8081, 5432, 6379, 6333-6334, 8000-8003, 9000-9001) from the VPC CIDR only.
+
+## Prerequisites
+
+1. **Tools on your machine:** OpenTofu 1.8 or later (`brew install opentofu`), AWS CLI v2 and the Session Manager plugin (`brew install --cask session-manager-plugin`).
+2. **AWS CLI profile.** The provider uses the `default` profile (`aws_profile`). The account is shared with other workloads, so set `allowed_account_ids` in `terraform.tfvars` to stop an apply against the wrong account. Everything this module creates uses the `caliban-testbed` name prefix where a resource takes a name; no account-wide setting is changed (no default EBS encryption toggle, no account-level S3 Block Public Access change).
+3. **Service quotas in eu-central-1.** These increases have **already been requested**. The commands are kept here for reference:
+
+   | Quota | Code | Needed |
+   |---|---|---|
+   | Running On-Demand G and VT instances | `L-DB2E81BA` | 8 vCPU |
+   | All G and VT Spot Instance Requests | `L-3819A6DF` | 8 vCPU |
+   | Running On-Demand Standard (A, C, D, H, I, M, R, T, Z) instances | `L-1216C47A` | 32 vCPU |
+
+   ```bash
+   aws service-quotas request-service-quota-increase --profile default --region eu-central-1 \
+     --service-code ec2 --quota-code L-DB2E81BA --desired-value 8
+   aws service-quotas request-service-quota-increase --profile default --region eu-central-1 \
+     --service-code ec2 --quota-code L-3819A6DF --desired-value 8
+   aws service-quotas request-service-quota-increase --profile default --region eu-central-1 \
+     --service-code ec2 --quota-code L-1216C47A --desired-value 32
+
+   # status
+   aws service-quotas list-requested-service-quota-change-history --profile default \
+     --region eu-central-1 --service-code ec2 \
+     --query 'RequestedQuotas[].[QuotaName,DesiredValue,Status]' --output table
+   ```
+
+   With `cpu_use_spot = true`, the CPU hosts also need "All Standard (A, C, D, H, I, M, R, T, Z) Spot Instance Requests" (`L-34B43A08`). `checks.tf` warns at plan time when the enabled hosts exceed `standard_vcpu_quota` (32) or `gpu_vcpu_quota` (8). The defaults fit exactly: gateway 8 + loadgen 8 + 4 routers × 4 = 32 standard vCPUs, and the GPU host uses 4 of the 8 G vCPUs.
+
+4. **g6e in Frankfurt.** The module picks the first AZ that offers both `g6e.xlarge` and the CPU type. To see which ones do before the first apply:
+
+   ```bash
+   aws ec2 describe-instance-type-offerings --profile default --region eu-central-1 \
+     --location-type availability-zone --filters Name=instance-type,Values=g6e.xlarge,c8g.2xlarge
+   ```
+
+## Quick start
+
+```bash
+cd deploy/aws/testbed
+cp terraform.tfvars.example terraform.tfvars     # optional; git-ignored
+tofu init
+tofu plan                                        # gateway + loadgen, public tier, build from main
+tofu apply
+tofu output ssm_sessions                         # shell on each host
+```
+
+Each host bootstraps itself with cloud-init and logs to `/var/log/caliban-testbed.log`. It writes `/var/lib/caliban-testbed/ready` when done, or `failed` on error:
+
+```bash
+aws ssm start-session --profile default --region eu-central-1 --target <gateway id>
+sudo tail -f /var/log/caliban-testbed.log
+```
+
+A source build of the Caliban image takes roughly 15 to 25 minutes on the gateway. Pulling vLLM and the 33 GB of weights on the GPU host takes roughly 10 to 20 minutes.
+
+The console and data plane can be reached from your laptop through SSM port forwarding (`tofu output console_port_forward`), then `http://127.0.0.1:8081/`. The admin token is in SSM: `aws ssm get-parameter --with-decryption --name /caliban-testbed/admin-token --query Parameter.Value --output text`.
+
+## Toggles and what they create
+
+Always created (free or nearly free while idle): the VPC, its three subnets, route tables, internet gateway, the locked-down default security group, the host and endpoint security groups, the S3 gateway endpoint, the bucket (with versioning, SSE-S3, per-bucket public access block, ownership controls, TLS-only policy and a lifecycle rule), the instance role and profile, and the SSM parameters with the generated secrets.
+
+| Toggle | Default | Resources |
+|---|---|---|
+| `gateway_enabled` | `true` | `aws_instance.host["gateway"]` (c8g.2xlarge) |
+| `router_count` | `0` | `aws_instance.host["router-1..N"]` (c8g.xlarge each) |
+| `loadgen_enabled` | `true` | `aws_instance.host["loadgen"]` (c8g.2xlarge) |
+| `gpu_enabled` | `false` | `aws_instance.host["gpu"]` (g6e.xlarge, DLAMI, 150 GB gp3; 300 GB when isolated) |
+| `gpu_market` | `spot` | persistent spot request that stops on interruption; `on-demand` is the fallback |
+| `cpu_use_spot` | `false` | the same spot options on the CPU hosts |
+| any host enabled | | `time_static.ttl`, `aws_scheduler_schedule.ttl_stop`, `aws_iam_role.autostop` + policy |
+| `network_mode`, `role_network_mode` | `public` | which subnet each host uses; public IPv4 only in `public` |
+| `enable_nat_gateway` | `false` | `aws_eip.nat`, `aws_nat_gateway.this`, `aws_route.private_nat` |
+| `enable_ssm_endpoints` | `null` (auto) | `aws_vpc_endpoint.ssm["ssm"\|"ssmmessages"\|"ec2messages"]`; auto = on while any host has no internet route |
+| `enable_flow_logs` | `false` | `aws_flow_log.vpc`, `aws_cloudwatch_log_group.flow_logs`, `aws_iam_role.flow_logs` + policy |
+| `s3_endpoint_allow_al2023_repos` | `true` | adds the Amazon Linux 2023 repository bucket to the S3 endpoint policy |
+| `results_upload` | `false` | adds `s3:PutObject` on `results/*` to the instance role |
+| `image_source` | `build` | `build`: clone and build on the host; `s3`: load a bundle (forced for isolated hosts) |
+| `cpu_arch` | `arm64` | Graviton c8g; `x86_64` uses c7i |
+
+Other useful variables: `core_ref` (for example `feat/semantic-cache`), `web_ref`, `deploy_ref`, `caliban_version`, `gpu_compose_profiles`, `gpu_run_caliban`, `gateway_use_gpu_models`, `bench_ref`, `bench_package`, `ttl_hours`, `bucket_force_destroy`. See `variables.tf`.
+
+**Why arm64 for the CPU hosts.** The Dockerfile's base images (`node:24-slim`, `rust:1-trixie`, `gcr.io/distroless/cc-debian13:nonroot`) are multi-arch, `build.sh` takes `--platform`, and the image already builds and runs on linux/arm64 with the `ner` feature (ONNX Runtime ships aarch64 binaries). Graviton is cheaper per vCPU. The GPU host is x86_64 regardless (g6e). Set `cpu_arch = "x86_64"` when one amd64 bundle should serve every host (scenario d with the GPU).
+
+## What runs on each host
+
+| Host | AMI | What the bootstrap does |
+|---|---|---|
+| gateway | Amazon Linux 2023 | Docker, compose and buildx plugins; image (build or bundle); `compose/.env` with secrets from SSM; `docker compose -f docker-compose.yml -f compose.testbed-gateway.yml up -d --wait` |
+| router-N | Amazon Linux 2023 | Docker; image; `docker run caliban/caliban:<v> router --control-plane-url http://<gateway>:8081 --snapshot-cache ...` with the snapshot public key, router token, KEK and the gateway's Valkey |
+| loadgen | Amazon Linux 2023 | build tools, rustup (stable), `cargo install oha`, core at `bench_ref` and `cargo build --release -p caliban-bench` if that package exists; else `s3://<bucket>/tools/<arch>/caliban-bench` |
+| gpu | Deep Learning Base OSS NVIDIA Driver GPU AMI (Ubuntu 24.04), from the public SSM parameter | NVIDIA driver, Docker and NVIDIA Container Toolkit come with the AMI; weights with `airgap/bundle.sh fetch` (connected) or from the bundle (s3); `docker compose ... --profile qwen3-large --profile embeddings --profile reranker up -d qwen3-large embed rerank` |
+
+`compose.testbed-gateway.yml` gives the gateway's Caliban the split-mode signing key and router token, swaps its `edge` network for a NAT'd bridge so it can call the GPU host and mock upstreams in the VPC, and publishes Postgres, Valkey and Qdrant on the host's private IP through a bridge with masquerading off. When the GPU host is enabled, the gateway's `caliban.toml` points the model providers at it (`8000` chat, `8001` embed, `8002` rerank) before the first start, because Postgres becomes the source of truth after that.
+
+`compose.testbed-models.yml` publishes the model servers on the GPU host's private IP through a bridge with masquerading off, so they still have no route out.
+
+The PII NER model is off in the testbed (`CALIBAN_PII_NER_DIR` empty). To test it, fetch the artifact with the ml repo's `scripts/fetch_pii_ner.py`, upload it, copy it to `/srv/caliban/models/pii` and set the variable in `compose/.env`.
+
+## Images, bundles and tools in the bucket
+
+- **`image_source = "build"`** (connected hosts): clones `core`, `web` and `deploy` from `github.com/thecalibanproject` side by side under `/opt/caliban/src` at `core_ref`, `web_ref` and `deploy_ref`, then runs `deploy/images/build.sh --version <caliban_version>`.
+- **`image_source = "s3"`** (forced for isolated hosts): downloads `s3://<bucket>/bundles/<arch>/caliban-bundle-<v>.tar` and its `.tar.sha256`, and verifies and loads it with this repo's `airgap/load.sh` (the copy delivered by cloud-init, not the one inside the bundle). The public key comes from `bundle_pubkey`, which plays the role of the out-of-band key. The GPU host also gets the weights from the bundle (`--models-dest /srv/caliban/models`).
+
+Build the bundles on a connected machine (see `airgap/README.md`):
+
+```bash
+B=$(tofu -chdir=deploy/aws/testbed output -raw bucket)
+
+# CPU hosts (arm64): Caliban and datastores only. Builds natively on Apple silicon.
+deploy/images/build.sh --version 0.1.0
+deploy/airgap/bundle.sh --version 0.1.0 --profile none --platform linux/arm64 \
+  --sign minisign --key caliban-bundle.key --out dist/arm64
+aws s3 cp dist/arm64/ "s3://$B/bundles/arm64/" --recursive --exclude '*' --include 'caliban-bundle-0.1.0.tar*'
+
+# GPU host (amd64): vLLM, TEI and the 48 GB tier's weights. bundle.sh always includes the
+# Caliban image, so an amd64 build of it must exist locally (emulated on Apple silicon: slow).
+deploy/images/build.sh --version 0.1.0 --platform linux/amd64
+deploy/airgap/bundle.sh fetch --profile embeddings,reranker --model Qwen/Qwen3.8-27B-FP8 \
+  --models-dir deploy/compose/models --allow-unpinned
+deploy/airgap/bundle.sh --version 0.1.0 --profile qwen3-large,embeddings,reranker \
+  --model Qwen/Qwen3.8-27B-FP8 --platform linux/amd64 --models-dir deploy/compose/models \
+  --sign minisign --key caliban-bundle.key --out dist/amd64
+aws s3 cp dist/amd64/ "s3://$B/bundles/amd64/" --recursive --exclude '*' --include 'caliban-bundle-0.1.0.tar*'
+```
+
+A local image store holds one platform per tag unless Docker uses the containerd image store, so build and bundle one architecture at a time (or use `cpu_arch = "x86_64"` and a single amd64 bundle). The GPU bundle is about 50 GB; S3 storage for it is about $1.20 a month.
+
+**Static tools for hosts without internet** go under `s3://<bucket>/tools/<arch>/` (`arm64` or `amd64`):
+
+| File | Needed when |
+|---|---|
+| `docker-compose` | an isolated Amazon Linux host runs compose (gateway). From `github.com/docker/compose/releases` (`docker-compose-linux-aarch64` or `-x86_64`), renamed. |
+| `minisign` or `cosign` | `bundle_verify` is `minisign` or `cosign` and the AMI does not have it |
+| `caliban-bench` | an isolated loadgen should run the bench (build it on a connected loadgen or in CI) |
+
+## Secrets and state
+
+`secrets.tf` generates the admin token, KEK (32 random bytes), Postgres and Valkey passwords, the router token and an Ed25519 snapshot signing key. They are stored as SSM SecureString parameters under `/caliban-testbed/` (AWS managed `aws/ssm` key) and read by the hosts at boot. The instance role can read them because `AmazonSSMManagedInstanceCore` includes `ssm:GetParameter`; that also means every testbed host can read every testbed secret, which is acceptable for a testbed only. Routers derive the public key and never read the private one.
+
+They are not in user data or in git, but they **are in the OpenTofu state**. State is local by default (`terraform.tfstate`, git-ignored). To keep it in S3 instead, create a versioned, encrypted state bucket by hand (not with this module, which would destroy it), copy `backend.s3.tf.example` to `backend.tf`, fill it in and run `tofu init -migrate-state`. It locks with an S3 lock file (`use_lockfile`), so no DynamoDB table is needed.
+
+## Network: what the isolated subnet can reach
+
+The isolated route table has the implicit VPC-local route and the S3 gateway endpoint's prefix-list route, nothing else. Isolated hosts get the `hosts` security group only (egress: VPC CIDR, and HTTPS to the S3 prefix list). Exactly this is reachable from there:
+
+| Destination | How | Limit |
+|---|---|---|
+| other hosts in the VPC | local route | security groups: service ports from the VPC CIDR |
+| `ssm`, `ssmmessages`, `ec2messages` in eu-central-1 | interface endpoints in the isolated subnet, private DNS | endpoint security group: 443 from the VPC |
+| S3 in eu-central-1 | gateway endpoint | endpoint policy, principals of this account only: the testbed bucket (get, put, list; puts still need `results_upload`), the Amazon Linux 2023 repository bucket `al2023-repos-eu-central-1-de612dc2` (read; turn off with `s3_endpoint_allow_al2023_repos = false`), and the SSM Agent update buckets `amazon-ssm-eu-central-1` and `amazon-ssm-packages-eu-central-1` (read). No other bucket. |
+| Amazon DNS resolver (VPC base + 2, 169.254.169.253) | always on in a VPC | not filtered by security groups |
+| instance metadata (169.254.169.254) and Amazon Time Sync (169.254.169.123) | link-local | IMDSv2 only, hop limit 1 (containers cannot reach it) |
+
+Nothing else: no internet gateway route, no NAT, no other AWS service endpoint (no EC2, STS, CloudWatch, ECR). The one residual channel is DNS: the Route 53 Resolver will still resolve public names, so DNS lookups for `example.com` succeed even though connections to the answer fail. Closing that needs Route 53 Resolver DNS Firewall, which this module does not set up.
+
+Interface endpoints cost about **$0.012 per hour each** in eu-central-1 (three of them: about $0.036/h, about $26 a month if left up), plus $0.01 per GB processed. That is why `enable_ssm_endpoints` defaults to "on only while a host needs them". Public-tier hosts reach SSM over the internet gateway instead.
+
+## Cost
+
+Prices are **estimates for eu-central-1, on-demand, Linux, October 2026; verify them on the AWS pricing pages** (EC2 on-demand and spot, VPC, EBS) before relying on them. Spot prices move; check the current price in the EC2 console's spot price history.
+
+| Component | On-demand / hour | Typical spot / hour | Notes |
+|---|---|---|---|
+| gateway c8g.2xlarge (8 vCPU, 16 GiB) | ~$0.37 | ~$0.13 to 0.18 | c7i.2xlarge ~$0.42 |
+| loadgen c8g.2xlarge | ~$0.37 | ~$0.13 to 0.18 | |
+| router c8g.xlarge (4 vCPU, 8 GiB), each | ~$0.19 | ~$0.07 to 0.09 | c7i.xlarge ~$0.21 |
+| gpu g6e.xlarge (1 × L40S 48 GB) | ~$2.25 | ~$0.90 to 1.20 | us-east-1 lists $1.861 on-demand |
+| gp3 root volume | ~$0.013 per 100 GB | | ~$0.0952 per GB-month; billed while stopped |
+| public IPv4 (public tier), each | $0.005 | | released while stopped |
+| SSM interface endpoints (3) | ~$0.036 | | auto toggle |
+| NAT gateway | ~$0.052 | | plus ~$0.052 per GB |
+| VPC Flow Logs | per GB ingested, ~$0.57 | | small for these tests |
+| S3 | ~$0.0245 per GB-month | | a 50 GB bundle ~$1.20/month |
+| EventBridge Scheduler, SSM parameters, IAM, VPC, S3 gateway endpoint | ~$0 | | |
+
+Inbound internet traffic (image pulls, Hugging Face downloads), S3 to EC2 in the same region and traffic between private IPs in one AZ are free.
+
+**Per scenario** (on-demand CPU hosts, compute + volumes + IPv4, rounded):
+
+| Scenario | Hosts | ~$/hour |
+|---|---|---|
+| (a) gateway overhead | gateway, loadgen | 0.77 |
+| (b) split mode, 4 routers | gateway, loadgen, 4 routers | 1.57 (0.77 + 0.20 per router) |
+| (c) GPU tier | gateway, loadgen, gpu | 1.7 to 2.0 with GPU spot; 3.05 with GPU on-demand |
+| (d) zero egress, CPU only | gateway, loadgen (isolated) + 3 endpoints + flow logs | 0.80 |
+| (d) zero egress with GPU | + gpu (isolated, 300 GB) | 1.8 to 2.1 spot; 3.1 on-demand |
+
+Add the time spent bootstrapping (source build, weight download) to each run.
+
+## Auto-stop and cost control
+
+The cost controls are the TTL auto-stop and the teardown checklist below.
+
+1. **EventBridge Scheduler (all hosts).** `aws_scheduler_schedule.ttl_stop` is a one-shot schedule at `ttl_hours` (default 4) after the current set of hosts was created. It calls `ec2:StopInstances` with the explicit instance ids, using a role that may stop exactly those instance ARNs and nothing else. `tofu output ttl_stop_at` shows when. It re-arms whenever the host set changes. To extend a run: `tofu apply -replace=time_static.ttl` (another `ttl_hours` from now).
+2. **OS timer (on-demand hosts).** A systemd timer powers the OS off `ttl_hours` after every boot, and `instance_initiated_shutdown_behavior = "stop"` turns that into a stop. To extend on a host: `sudo systemctl stop caliban-ttl.timer`. Spot hosts skip it and rely on the scheduler (a persistent spot request with stop-on-interruption can be stopped through the API).
+
+A stopped host still pays for its EBS volume (about $14 a month for the 150 GB GPU volume). A started host gets a fresh OS timer, but the scheduler fires only once: run `tofu apply -replace=time_static.ttl` after starting hosts by hand.
+
+## Scenario runbooks
+
+Shell variables used below: `P="--profile default --region eu-central-1"`. Run `tofu output` for ids and IPs. On the hosts, `/etc/profile.d/caliban-testbed.sh` exports `GATEWAY_IP`, `GPU_IP`, `LOADGEN_IP`, `ROUTER_IPS` and `CALIBAN_DEPLOY_DIR`.
+
+Common steps on the loadgen (admin token from SSM, a tenant key minted through the admin API):
+
+```bash
+ADMIN=$(aws ssm get-parameter --with-decryption --name /caliban-testbed/admin-token \
+  --query Parameter.Value --output text)
+KEY=$(curl -s -X POST -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"name":"bench"}' "http://$GATEWAY_IP:8081/api/v1/tenants/default/api-keys" | jq -r .key)
+```
+
+To keep results, set `results_upload = true` and copy them to `s3://<bucket>/results/<scenario>/`, then `aws s3 sync` them down to your laptop.
+
+### (a) Gateway overhead bench on Linux
+
+Goal: Caliban's added latency (design target p50 < 3 ms, p99 < 10 ms, without classifiers or RAG) and throughput, against a mock upstream that answers instantly.
+
+```bash
+tofu apply                                   # defaults: gateway + loadgen, public tier
+```
+
+1. Wait for `ready` on both hosts.
+2. On the loadgen, start the mock upstream on port 9000 (bound to the private IP). The bench crate is being written on core's `feat/bench` branch. `loadgen.sh` builds it if the branch has the package `caliban-bench` (`bench_ref`, `bench_package`), or installs a prebuilt binary from `s3://<bucket>/tools/<arch>/caliban-bench`. Until it lands, `oha` is installed and any fast OpenAI-compatible mock will do; core's `scripts/mock_upstream.py` is single-threaded and for functional checks only. To rebuild after the branch moves: `cd /opt/caliban/src/core && git pull && cargo build --release -p caliban-bench`.
+3. Register the mock as a provider, a model and the tenant route (admin API on the gateway):
+
+   ```bash
+   H=(-H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json')
+   curl -s "${H[@]}" -X POST "http://$GATEWAY_IP:8081/api/v1/providers" \
+     -d "{\"id\":\"mock\",\"kind\":\"openai_compatible\",\"base_url\":\"http://$LOADGEN_IP:9000/v1\",\"trust_tier\":\"t0_sovereign\"}"
+   curl -s "${H[@]}" -X POST "http://$GATEWAY_IP:8081/api/v1/models" \
+     -d '{"id":"bench/mock","provider":"mock","upstream_model":"mock","kind":"chat","trust_tier":"t0_sovereign"}'
+   curl -s "${H[@]}" -X PUT "http://$GATEWAY_IP:8081/api/v1/tenants/default/routes" \
+     -d '{"routes":[{"intent":"default","models":["bench/mock"]}]}'
+   ```
+
+4. Baseline (direct to the mock), then through Caliban, same load:
+
+   ```bash
+   BODY='{"model":"mock","messages":[{"role":"user","content":"hello"}],"max_tokens":16}'
+   oha -z 60s -c 64 -m POST -H 'Content-Type: application/json' -d "$BODY" \
+     "http://$LOADGEN_IP:9000/v1/chat/completions"
+   oha -z 60s -c 64 -m POST -H 'Content-Type: application/json' -H "Authorization: Bearer $KEY" \
+     -d "${BODY/\"mock\"/\"bench/mock\"}" "http://$GATEWAY_IP:8080/v1/chat/completions"
+   ```
+
+   The difference in p50 and p99 is the gateway overhead. Repeat with PII mode `off`, `mask` and `reversible`, and with the exact cache on and off.
+
+### (b) Split mode with N routers and a shared Valkey
+
+```bash
+tofu apply -var router_count=4               # 32 standard vCPUs with gateway + loadgen
+```
+
+1. The gateway runs `standalone` with `CALIBAN_SNAPSHOT_SIGNING_KEY` and `CALIBAN_ROUTER_TOKEN`, so it serves signed snapshots at `/api/v1/snapshot`. Each router polls it every 10 s and points `CALIBAN_VALKEY_URL` at the gateway's Valkey (`<gateway>:6379`). The Valkey quota store is on core's `feat/valkey-quotas` branch: set `core_ref = "feat/valkey-quotas"` to test it; `main` keeps quotas in memory per process.
+2. Check every router: `curl -s http://<router ip>:8080/healthz`. On a router, `sudo docker logs caliban-router` shows the snapshot version it applied.
+3. Propagation: create a key or change a route on the gateway, then time how long until every router honours it (one poll interval, about 10 s).
+4. Fail-static: on the gateway, `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-gateway.yml stop caliban`; the routers keep serving. `sudo docker restart caliban-router` on a router while the control plane is down: it serves from `/var/lib/caliban/snapshot.json`.
+5. Load: run the same `oha` or bench command against each router IP at once and compare with (a). With the Valkey branch, set a tenant `requests_per_minute` and check that the limit holds across all routers together.
+
+### (c) GPU open-model tier
+
+```bash
+tofu apply -var gpu_enabled=true \
+  -var core_ref=feat/semantic-cache          # or feat/intent-knn, or main
+```
+
+1. The GPU host (spot; `-var gpu_market=on-demand` if spot capacity is short) fetches Qwen3.8-27B-FP8, Qwen3-Embedding-0.6B and Qwen3-Reranker-0.6B with `airgap/bundle.sh fetch` (unpinned revisions are allowed by `hf_allow_unpinned` until `models.lock.yaml` is pinned) and starts the compose profiles `qwen3-large embeddings reranker` with the `.env.example` defaults that fit 48 GB. Watch it: `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose ps` and `nvidia-smi`.
+2. The gateway's providers point at the GPU host (`gateway_use_gpu_models`). Check from the loadgen:
+
+   ```bash
+   curl -s "http://$GPU_IP:8000/v1/models"; curl -s "http://$GPU_IP:8001/health"
+   curl -s "http://$GPU_IP:8001/v1/embeddings" -H 'Content-Type: application/json' \
+     -d '{"model":"Qwen/Qwen3-Embedding-0.6B","input":"hello"}' | jq '.data[0].embedding | length'   # 1024
+   ```
+
+3. Semantic cache and intent classifier against the real embedder: build the gateway from the feature branch (`core_ref`), enable the feature in the config as that branch documents, and send paraphrased prompts through `http://$GATEWAY_IP:8080/v1/chat/completions`. Measure the hit rate, the added latency of the embedding call (TEI on the L40S) and the false-hit rate on near-miss prompts.
+4. vLLM throughput, inside the vLLM container on the GPU host (random dataset, no download):
+
+   ```bash
+   cd $CALIBAN_DEPLOY_DIR/compose
+   sudo docker compose exec qwen3-large vllm bench serve --backend openai-chat \
+     --base-url http://127.0.0.1:8000 --endpoint /v1/chat/completions \
+     --model Qwen/Qwen3.8-27B-FP8 --tokenizer /models/qwen3.8-27b-fp8 \
+     --dataset-name random --random-input-len 1024 --random-output-len 256 \
+     --num-prompts 200 --max-concurrency 16
+   ```
+
+   Then the same load through Caliban from the loadgen (`MODEL=local/qwen3.8-27b`) to see the gateway's share. To run everything on the GPU host instead (the README's single-host tier), set `gpu_run_caliban = true` (the x86_64 source build on 4 vCPUs is slow; use an amd64 bundle with `image_source = "s3"`).
+
+### (d) Zero-egress install from an offline bundle
+
+```bash
+# bundles and tools uploaded first (see "Images, bundles and tools in the bucket")
+tofu apply -var network_mode=isolated -var enable_flow_logs=true \
+  -var 'bundle_pubkey=<contents of caliban-bundle.pub>'
+# with the GPU: add -var gpu_enabled=true (amd64 bundle with the weights)
+```
+
+1. Every host is in the isolated subnet, with no public IP, and loads the Caliban image (and on the GPU host, vLLM, TEI and the weights) from the bucket with `load.sh`, which checks the signature and every file. Docker comes from the Amazon Linux 2023 repositories through the S3 endpoint; compose from `tools/<arch>/docker-compose`. The three SSM endpoints come up automatically.
+2. Check the install: on the gateway, `cd $CALIBAN_DEPLOY_DIR/compose && sudo ../scripts/smoke.sh` (health and admin API; add `MINT_KEY=1` and the GPU for a chat completion).
+3. Egress attempts must fail, from the host and from the containers:
+
+   ```bash
+   curl -sS -m 5 https://example.com && echo "EGRESS WORKS: FAIL" || echo "blocked: ok"
+   curl -sS -m 5 http://1.1.1.1 && echo "EGRESS WORKS: FAIL" || echo "blocked: ok"
+   curl -sS -m 5 https://s3.eu-west-1.amazonaws.com && echo "FAIL" || echo "other region blocked: ok"
+   aws s3 ls s3://some-other-bucket 2>&1 | grep -q AccessDenied && echo "other bucket denied: ok"
+   sudo nsenter -t "$(sudo docker inspect -f '{{.State.Pid}}' caliban-caliban-1)" -n \
+     curl -sS -m 5 https://example.com || echo "caliban container blocked: ok"
+   aws s3 ls "s3://$CALIBAN_TESTBED_BUCKET/bundles/" && echo "testbed bucket reachable: expected"
+   ```
+
+   The `curl` calls time out: there is no route, and the security group has no rule for them.
+4. Flow logs (`tofu output network` gives the log group and the isolated subnet id). In CloudWatch Logs Insights on `/caliban-testbed/vpc-flow-logs`, after the tests above:
+
+   ```
+   parse @message "* * * * * * * * * * * * * * * * * * *" as version, eni, subnet, instance, src, dst, srcport, dstport, proto, packets, bytes, start, end, action, status, direction, path, pktsrc, pktdst
+   | filter subnet = "<isolated subnet id>" and direction = "egress"
+   | filter not isIpv4InSubnet(dst, "10.42.0.0/16")
+   | stats count(*) as flows, sum(bytes) as bytes by action, path, dst
+   | sort flows desc
+   ```
+
+   Expected: `ACCEPT` rows only with `path = 7` (S3 gateway endpoint), and `REJECT` rows for the `curl` attempts. No `ACCEPT` row may have `path = 8` (internet gateway). Traffic to the SSM endpoints stays inside the VPC CIDR and is filtered out by the second line.
+5. Turn flow logs and the GPU off again when done.
+
+## Teardown checklist
+
+1. Copy what you need: `aws s3 sync s3://<bucket>/results ./results $P`.
+2. Destroy: `cd deploy/aws/testbed && tofu destroy`. With bundles still in the bucket, either delete them first (`aws s3 rm s3://<bucket> --recursive $P`, then remove old versions in the console) or set `bucket_force_destroy = true`, `tofu apply`, then `tofu destroy`.
+3. Check nothing is left, using the ids from `tofu output` before destroying:
+   - `aws ec2 describe-instances $P --instance-ids <ids> --query 'Reservations[].Instances[].State.Name'` shows `terminated`;
+   - `aws ec2 describe-spot-instance-requests $P --spot-instance-request-ids <ids>` shows no `open` or `active` request; cancel any that remain with `aws ec2 cancel-spot-instance-requests` (the spot request ids are in the EC2 console or `aws ec2 describe-instances` before the destroy);
+   - `aws ec2 describe-volumes $P --filters Name=attachment.instance-id,Values=<ids>` is empty, and no unattached volumes from the testbed remain;
+   - `aws ec2 describe-addresses $P` shows no Elastic IP from the NAT gateway;
+   - `aws ec2 describe-vpc-endpoints $P --filters Name=vpc-id,Values=<vpc id>` is empty;
+   - `aws scheduler list-schedules $P --name-prefix caliban-testbed` is empty;
+   - `aws ssm get-parameters-by-path $P --path /caliban-testbed` is empty.
+4. Remove local state if you will not use it again: `terraform.tfstate*` hold the old secrets.
+
+**Parking instead of destroying.** `tofu apply -var gateway_enabled=false -var loadgen_enabled=false -var router_count=0 -var gpu_enabled=false -var enable_flow_logs=false` keeps the VPC, bucket and parameters (pennies) and removes every hourly cost. Interface endpoints switch off with the hosts.
+
+## Validation (offline)
+
+None of these call AWS. `tofu test` plans every scenario against a mocked AWS provider.
+
+```bash
+cd deploy/aws/testbed
+tofu fmt -check -recursive
+tofu init -backend=false
+tofu validate
+tofu test
+docker run --rm -v "$PWD":/data -w /data --entrypoint /bin/sh ghcr.io/terraform-linters/tflint \
+  -c 'tflint --init && tflint'
+docker run --rm -v "$PWD":/src aquasec/trivy config /src
+docker run --rm -v "$PWD":/tf bridgecrew/checkov -d /tf --framework terraform --compact
+docker run --rm -v "$PWD/bootstrap":/mnt -w /mnt koalaman/shellcheck:v0.11.0 -x *.sh
+(cd ../../compose && cp .env.example .env && \
+  CALIBAN_ADMIN_TOKEN=x CALIBAN_KEK=x POSTGRES_PASSWORD=x VALKEY_PASSWORD=x \
+  CALIBAN_SNAPSHOT_SIGNING_KEY=x CALIBAN_ROUTER_TOKEN=x TESTBED_BIND=10.42.0.10 \
+  docker compose -f docker-compose.yml -f ../aws/testbed/bootstrap/compose.testbed-gateway.yml \
+    -f ../aws/testbed/bootstrap/compose.testbed-models.yml \
+    --profile qwen3-large --profile embeddings --profile reranker config -q)
+```
+
+Accepted scanner findings are annotated in place with `trivy:ignore` and `checkov:skip` comments and a reason: SSE-S3 rather than KMS (as specified), no bucket access logging or replication, flow logs as a toggle, outbound HTTPS from connected hosts only, no detailed monitoring.
+
+## Known limits
+
+- The first `tofu plan` reads AWS (AZ offerings, AMI parameters, account id). There is no other way to resolve them; `tofu test` covers the logic offline.
+- The DLAMI public parameter path and the Docker plugin versions (`compose_version`, `buildx_version`) are defaults to check against the current releases.
+- Spot capacity for g6e in Frankfurt can be short; switch `gpu_market` to `on-demand` and re-apply.
+- The bench crate and the semantic cache, intent kNN and Valkey quota features live on core branches; the runbooks pick them with `bench_ref` and `core_ref`.
+- DNS resolution is not blocked in the isolated subnet (see the reachability table).
