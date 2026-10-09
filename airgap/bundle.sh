@@ -128,6 +128,13 @@ model_selected() {  # $1 id, $2 profiles, $3 bundle flag
   [[ "$3" == true ]] && group_selected "$2"
 }
 
+# A model dir is a relative path of plain names (e.g. qwen3-embedding-0.6b, or
+# pii/nym-pii-multilingual-small-int8): no absolute path, no empty, '.' or '..' component.
+valid_model_dir() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || return 1
+  [[ "/$1/" != */./* && "/$1/" != */../* ]]
+}
+
 licence_allowed() {
   local l
   for l in "${ALLOWED_LICENCES[@]}"; do [[ "$1" == "$l" ]] && return 0; done
@@ -192,7 +199,7 @@ fetch_models() {
   while IFS='|' read -r id dir lic prof bun sha src rev inc exc; do
     model_selected "$id" "$prof" "$bun" || continue
     licence_allowed "$lic" || die "model $id has licence '$lic' which is not allowed (use --allow-licence $lic after legal review)"
-    [[ "$dir" =~ ^[A-Za-z0-9._-]+$ ]] || die "model $id: bad dir '$dir'"
+    valid_model_dir "$dir" || die "model $id: bad dir '$dir'"
     if [[ "$src" == hf://* && ( -z "$rev" || "$rev" == TODO* ) && "$ALLOW_UNPINNED" != true ]]; then
       die "model $id: revision not pinned in models.lock.yaml (set it, or pass --allow-unpinned to fetch main)"
     fi
@@ -298,10 +305,11 @@ else
   while IFS='|' read -r id dir lic prof bun sha _src _rev _inc _exc; do
     model_selected "$id" "$prof" "$bun" || continue
     licence_allowed "$lic" || die "model $id has licence '$lic' which is not allowed in the bundle (use --allow-licence $lic after legal review)"
-    [[ "$dir" =~ ^[A-Za-z0-9._-]+$ ]] || die "model $id: bad dir '$dir'"
+    valid_model_dir "$dir" || die "model $id: bad dir '$dir'"
     src="$MODELS_DIR/$dir"
     [[ -d "$src" ]] || die "model $id: $src missing. Download it first: airgap/bundle.sh fetch (airgap/README.md)."
     log "  $id ($lic) -> models/$dir"
+    mkdir -p "$(dirname "$STAGE/models/$dir")"
     cp -R "$src" "$STAGE/models/$dir"
     rm -rf "$STAGE/models/$dir/.cache"
     got="$(tree_hash "$STAGE/models/$dir")"

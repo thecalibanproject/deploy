@@ -48,9 +48,9 @@ networks:
   testbed-in:
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: br-caliban-tbin
+      com.docker.network.bridge.name: br-caliban-tbi
       com.docker.network.bridge.enable_ip_masquerade: "false"
   testbed-out:
     driver: bridge
     driver_opts:
-      com.docker.network.bridge.name: br-caliban-tbout
+      com.docker.network.bridge.name: br-caliban-tbo
