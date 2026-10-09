@@ -28,7 +28,7 @@ database:
   urlKey: uri
 
 qdrant:
-  url: http://qdrant.caliban-data.svc.cluster.local:6334
+  url: http://qdrant.caliban-data.svc.cluster.local:6333
 
 valkey:
   existingSecret: caliban-valkey
@@ -237,7 +237,6 @@ networkPolicy:
         ports:
           - { port: 5432, protocol: TCP }
           - { port: 6333, protocol: TCP }
-          - { port: 6334, protocol: TCP }
           - { port: 6379, protocol: TCP }
     # Engines run in-release (modelPools) and are allowed automatically. Keep this entry only
     # if you also run engines in a separate `llm` namespace.

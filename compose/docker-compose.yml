@@ -93,7 +93,7 @@ services:
       CALIBAN_ADMIN_TOKEN: ${CALIBAN_ADMIN_TOKEN:?set CALIBAN_ADMIN_TOKEN in .env}
       CALIBAN_KEK: ${CALIBAN_KEK:?set CALIBAN_KEK in .env (base64, 32 bytes)}
       CALIBAN_DATABASE_URL: postgres://caliban:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caliban
-      CALIBAN_QDRANT_URL: http://qdrant:6334
+      CALIBAN_QDRANT_URL: http://qdrant:6333
       CALIBAN_VALKEY_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env}@valkey:6379/0
       # BYOK keys referenced from caliban.toml via { env = "..." }. Empty = unused.
       ACME_OPENAI_API_KEY: ${ACME_OPENAI_API_KEY:-}

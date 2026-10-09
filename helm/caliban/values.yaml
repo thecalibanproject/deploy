@@ -94,7 +94,7 @@ database:
   urlKey: url
 
 qdrant:
-  url: http://qdrant:6334
+  url: http://qdrant:6333
 
 valkey:
   # Shared quota store (config.limits.store = valkey). Used when existingSecret is empty.
@@ -589,7 +589,6 @@ networkPolicy:
         ports:
           - { port: 5432, protocol: TCP }   # postgres
           - { port: 6333, protocol: TCP }   # qdrant http
-          - { port: 6334, protocol: TCP }   # qdrant grpc
           - { port: 6379, protocol: TCP }   # valkey
     # Self-hosted model servers OUTSIDE this release (vLLM / SGLang / llm-d gateway in an `llm`
     # namespace). In-release modelPools are allowed automatically.
