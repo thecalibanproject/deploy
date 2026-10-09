@@ -303,7 +303,21 @@ tofu apply                                   # defaults: gateway + loadgen, publ
    ./caliban-bench --remote ep.json --concurrency 1,16,64 --out cross.md --json cross.json
    ```
 
-   Without `--serve`/`--remote`, `caliban-bench --caliban ./caliban` runs everything on one host. The binaries built on Amazon Linux 2023 cannot include the PII NER model (`--features ner`): the prebuilt ONNX Runtime needs a newer libstdc++ than AL2023's GCC 11. Build and run that variant in a `rust:1-trixie` container (`--network host`), like the Caliban image. Results of the first run: core `bench/RESULTS-aws-2026-10.md`.
+   Without `--serve`/`--remote`, `caliban-bench --caliban ./caliban` runs everything on one host. Results of the first run: core `bench/RESULTS-aws-2026-10.md`.
+
+   **PII NER builds.** The `ner` feature does not link on Amazon Linux 2023: the prebuilt ONNX Runtime that `ort` downloads needs GCC 13/14 libstdc++ and AL2023 ships GCC 11. Build and run that variant in a `rust:1-trixie` container, the toolchain of the Caliban image (Debian trixie, so the image itself is not affected). The binaries need trixie's glibc, so run them in the same container:
+
+   ```bash
+   # in the core checkout on the host
+   sudo docker run --rm -it --network host -v "$PWD":/src -w /src \
+     -e CARGO_TARGET_DIR=/src/target-trixie rust:1-trixie bash
+   # inside the container
+   cargo build --release -p caliban -p caliban-bench --features caliban/ner
+   CALIBAN_PII_NER_DIR=/src/models/pii/<artifact>/<version> CALIBAN_TCP_NODELAY=1 \
+     target-trixie/release/caliban-bench --caliban target-trixie/release/caliban --concurrency 1,16,64 --out ner.md
+   ```
+
+   The separate target directory keeps these builds apart from the AL2023 ones in `target/`.
 3. Register the mock as a provider, a model and the tenant route (admin API on the gateway):
 
    ```bash
@@ -355,7 +369,16 @@ tofu apply -var gpu_enabled=true              # the semantic cache and intent kN
      -d '{"model":"Qwen/Qwen3-Embedding-0.6B","input":"hello"}' | jq '.data[0].embedding | length'   # 1024
    ```
 
-3. Semantic cache and intent classifier against the real embedder. `[cache]` always comes from the file (Postgres only holds tenants, models and routes), so on the gateway append a `[cache.semantic]` table (`enabled = true`, `store = "qdrant"`, `embedding_model = "local/qwen3-embedding-0.6b"`) to `/opt/caliban-testbed/caliban.toml` and recreate the service: `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-gateway.yml up -d --force-recreate --wait caliban`. Then create a tenant with `"semantic_cache": "on"` (`POST /api/v1/tenants`), give it a key and a route, and send paraphrased and near-miss prompts with `temperature` at most 0.3 through `http://$GATEWAY_IP:8080/v1/chat/completions` (`x-caliban-cache-tier: semantic` marks a hit). For the intent classifier, run core's `knn_eval` test on the loadgen with `CALIBAN_KNN_EVAL_URL=http://$GPU_IP:8001/v1 CALIBAN_KNN_EVAL_MODEL=Qwen/Qwen3-Embedding-0.6B`.
+3. Semantic cache and intent classifier against the real embedder. `[cache]` and `[routing]` always come from the file (Postgres only holds tenants, models and routes). `/opt/caliban-testbed/caliban.toml` is a copy of `compose/config/caliban.toml`, which already carries the calibrated values for Qwen3-Embedding-0.6B: a `[cache.semantic]` table (`store = "qdrant"`, `min_threshold = 0.93`) with `enabled = false`, and a commented-out `[routing]` table (`query_prefix`, `temperature = 0.1`, `abstain_threshold = 0.6`, `oos_threshold = 0.64`; the `\n` in `query_prefix` is a TOML escape for the newline the Qwen3 instruction format needs). On the gateway, turn both on and recreate the service:
+
+   ```bash
+   TOML=/opt/caliban-testbed/caliban.toml
+   sudo sed -i '/^\[cache.semantic\]/,/^\[/ s/^enabled = false/enabled = true/' "$TOML"
+   sudo sed -i '/^# \[routing\]/,/^# oos_threshold/ s/^# //' "$TOML"
+   cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-gateway.yml up -d --force-recreate --wait caliban
+   ```
+
+   Then create a tenant with `"semantic_cache": "on"` (`POST /api/v1/tenants`), give it a key and a route, and send paraphrased and near-miss prompts with `temperature` at most 0.3 through `http://$GATEWAY_IP:8080/v1/chat/completions` (`x-caliban-cache-tier: semantic` marks a hit). For the intent classifier on its own, run core's `knn_eval` test on the loadgen with `CALIBAN_KNN_EVAL_URL=http://$GPU_IP:8001/v1 CALIBAN_KNN_EVAL_MODEL=Qwen/Qwen3-Embedding-0.6B`.
 4. vLLM throughput, inside the vLLM container on the GPU host (random dataset, no download):
 
    ```bash

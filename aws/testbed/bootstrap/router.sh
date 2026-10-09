@@ -20,6 +20,8 @@ CALIBAN_KEK=$(param kek)
 CALIBAN_VALKEY_URL=redis://:$(param valkey-password)@$GATEWAY_IP:6379/0
 CALIBAN_QDRANT_URL=http://$GATEWAY_IP:6334
 CALIBAN_LOG=info
+# Nagle plus delayed ACK added 24 to 50 ms to the first streamed token on Linux.
+CALIBAN_TCP_NODELAY=1
 ENV
 umask 022
 

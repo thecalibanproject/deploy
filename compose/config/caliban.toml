@@ -40,6 +40,22 @@ exact_enabled = true
 exact_max_entries = 100000
 exact_ttl_secs = 3600
 
+# T2 semantic cache (Qdrant; CALIBAN_QDRANT_URL wins over qdrant_url). Off unless enabled here
+# AND `semantic_cache = "on"` on the tenant. Needs the embeddings profile, ideally on a GPU: on CPU,
+# Qwen3-Embedding-0.6B takes about 275 ms per prompt, far over the 50 ms lookup budget.
+# min_threshold = 0.93 is calibrated for Qwen3-Embedding-0.6B: below it the false-hit rate on
+# near-miss prompts doubles (core bench/RESULTS-aws-2026-10.md).
+[cache.semantic]
+enabled = false
+store = "qdrant"
+qdrant_url = "http://qdrant:6333"
+embedding_model = "local/qwen3-embedding-0.6b"
+threshold = 0.95
+min_threshold = 0.93
+max_error_rate = 0.02
+ttl_secs = 86400
+lookup_budget_ms = 50
+
 [pii]
 default_mode = "reversible"
 
@@ -49,6 +65,19 @@ default_mode = "reversible"
 # Add limits here (see core/config/caliban.example.toml), e.g. requests_per_minute = 600.
 [limits]
 store = "valkey"
+
+# caliban/auto intent routing. Without [routing], keyword rules pick the intent. To add the
+# embedding kNN stage, start the embeddings profile (GPU) and uncomment the table. The values are
+# calibrated for Qwen3-Embedding-0.6B (kNN top-1 0.948 against 0.838 without the instruction; core
+# bench/RESULTS-aws-2026-10.md). "\n" in query_prefix is a TOML escape for a newline, which is
+# what the Qwen3 instruction format expects. oos_threshold only holds with this query_prefix.
+# [routing]
+# embedding_model = "local/qwen3-embedding-0.6b"
+# query_prefix = "Instruct: Given a user request, identify the type of task it asks for\nQuery: "
+# k = 5
+# temperature = 0.1
+# abstain_threshold = 0.6
+# oos_threshold = 0.64
 
 # ═════════════════════ Shared model servers (on-prem pools) ═════════════════════
 # Host names match the docker-compose service names; in Kubernetes, the Helm `modelPools`

@@ -110,6 +110,10 @@ valkey:
 # tracing filter, e.g. "info,caliban=debug"
 log: info
 
+# CALIBAN_TCP_NODELAY on every Caliban pod. Keep it on: on Linux, Nagle plus delayed ACK added
+# 24 to 50 ms to the first streamed token (core bench/RESULTS-aws-2026-10.md).
+tcpNodelay: true
+
 # Telemetry is OFF unless an endpoint is set. Point it at YOUR collector only.
 otel:
   endpoint: ""
@@ -141,6 +145,19 @@ config:
     exact_enabled: true
     exact_max_entries: 100000
     exact_ttl_secs: 3600
+    # T2 semantic cache (Qdrant at CALIBAN_QDRANT_URL). Off unless enabled here AND
+    # semantic_cache = "on" on the tenant. min_threshold 0.93 is calibrated for
+    # Qwen3-Embedding-0.6B: below it the false-hit rate on near-miss prompts doubles
+    # (core bench/RESULTS-aws-2026-10.md).
+    semantic:
+      enabled: false
+      store: qdrant
+      embedding_model: local/qwen3-embedding-0.6b
+      threshold: 0.95
+      min_threshold: 0.93
+      max_error_rate: 0.02
+      ttl_secs: 86400
+      lookup_budget_ms: 50
   pii:
     default_mode: reversible
   # Rate limits and budgets, shared by every router through Valkey (CALIBAN_VALKEY_URL from
@@ -148,6 +165,18 @@ config:
   # quota.state = degraded. Limits: core/config/caliban.example.toml.
   limits:
     store: valkey
+  # caliban/auto intent routing. Without `routing`, keyword rules pick the intent. To add the
+  # embedding kNN stage (needs the embedding pool), uncomment the block. Values calibrated for
+  # Qwen3-Embedding-0.6B (kNN top-1 0.948 against 0.838 without the instruction; core
+  # bench/RESULTS-aws-2026-10.md). Keep query_prefix DOUBLE-quoted so YAML turns \n into a
+  # newline; the chart then writes it to TOML as "\n". oos_threshold only holds with this prefix.
+  # routing:
+  #   embedding_model: local/qwen3-embedding-0.6b
+  #   query_prefix: "Instruct: Given a user request, identify the type of task it asks for\nQuery: "
+  #   k: 5
+  #   temperature: 0.1
+  #   abstain_threshold: 0.6
+  #   oos_threshold: 0.64
   # Deployment-wide model servers shared by all tenants (on-prem pools). Hostnames are the
   # Service names of modelPools.pools below (same namespace), or your own engine's Service.
   # cache_salt = true only for vLLM / SGLang (per-tenant prefix-cache isolation).

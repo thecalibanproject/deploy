@@ -62,7 +62,7 @@ Every shape runs the same image and the same binary. Background: §6 of the [ref
 
 **Ports.** `8080` is the data plane (`/v1/*` OpenAI- and Anthropic-compatible API, `/healthz`). `8081` is the control plane (`/api/v1/*` and the web console at `/`).
 
-**Datastores.** Postgres is the control plane's store: it holds tenants, keys, sealed BYOK credentials, the catalogue, routes and the hash-chained audit log, and core applies its migrations at start-up. Valkey holds the rate limits and token budgets (`CALIBAN_VALKEY_URL`, `[limits] store = "valkey"` in the shipped configs), so every router enforces the same quotas; if it is unreachable, each router limits locally and `/healthz` reports `quota.state: degraded`. Qdrant is provisioned and wired in (`CALIBAN_QDRANT_URL`) for the semantic cache and retrieval index; those features are still in progress in core, and the current binary does not connect to Qdrant yet.
+**Datastores.** Postgres is the control plane's store: it holds tenants, keys, sealed BYOK credentials, the catalogue, routes and the hash-chained audit log, and core applies its migrations at start-up. Valkey holds the rate limits and token budgets (`CALIBAN_VALKEY_URL`, `[limits] store = "valkey"` in the shipped configs), so every router enforces the same quotas; if it is unreachable, each router limits locally and `/healthz` reports `quota.state: degraded`. Qdrant is provisioned and wired in (`CALIBAN_QDRANT_URL`) for the semantic cache and retrieval index. The shipped configs carry a `[cache.semantic]` table that is off (`enabled = false`) with `min_threshold = 0.93`, calibrated for Qwen3-Embedding-0.6B; a tenant also needs `semantic_cache = "on"`. They also carry the calibrated `[routing]` values for the embedding kNN intent stage, commented out.
 
 ## Build the image
 
@@ -119,7 +119,7 @@ To mint a key offline instead, run `docker compose run --rm caliban keygen` and 
 
 The web console is at `http://127.0.0.1:8081/`; log in with `CALIBAN_ADMIN_TOKEN`. The ports bind to `127.0.0.1` by default (`CALIBAN_BIND`, `CALIBAN_ROUTER_PORT`, `CALIBAN_CP_PORT`). Put a TLS reverse proxy in front before exposing them.
 
-**Config seeding.** The compose stack runs with Postgres (`CALIBAN_DATABASE_URL`), so `config/caliban.toml` seeds the database **once**, on the first start. After that, tenants, API keys, BYOK credentials, providers, models and routes are managed in the console or through the admin API, and those sections of the file are ignored. `[server]`, `[security]`, `[cache]`, `[pii]` and `[limits]` are always read from the file.
+**Config seeding.** The compose stack runs with Postgres (`CALIBAN_DATABASE_URL`), so `config/caliban.toml` seeds the database **once**, on the first start. After that, tenants, API keys, BYOK credentials, providers, models and routes are managed in the console or through the admin API, and those sections of the file are ignored. `[server]`, `[security]`, `[cache]`, `[pii]`, `[limits]` and `[routing]` are always read from the file.
 
 **Network layout.**
 

@@ -302,6 +302,8 @@ spec:
             {{- end }}
             - name: CALIBAN_LOG
               value: {{ $root.Values.log | quote }}
+            - name: CALIBAN_TCP_NODELAY
+              value: {{ if eq (toString $root.Values.tcpNodelay) "false" }}"0"{{ else }}"1"{{ end }}
             {{- if not $isRouter }}
             # Control plane only: routers never read the admin token or the database
             # (core reads both only when it builds the control plane).

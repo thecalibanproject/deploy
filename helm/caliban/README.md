@@ -38,6 +38,7 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `database.existingSecret` | `caliban-database` | Key `url`: the Postgres DSN. |
 | `providerKeys.existingSecret` | `""` | Every key becomes an env var, for `api_key = { env = "..." }` refs. Mounted on routers too, since refs resolve where the request is served. |
 | `extraEnv` | `[]` | Added to every Caliban pod. `router.extraEnv`, `controlPlane.extraEnv` and `standalone.extraEnv` add env to one component only. |
+| `tcpNodelay` | `true` | Sets `CALIBAN_TCP_NODELAY` (`1`/`0`) on every Caliban pod. Keep it on: on Linux, Nagle plus delayed ACK added 24 to 50 ms to the first streamed token (core `bench/RESULTS-aws-2026-10.md`). |
 | `qdrant.url` / `valkey.url` / `valkey.existingSecret` | in-namespace defaults | Valkey holds the quotas shared by all routers (`config.limits.store: valkey`) |
 | `valkey.passwordSecret` / `valkey.passwordKey` | `""` / `password` | Optional: Valkey password from its own Secret (`CALIBAN_VALKEY_PASSWORD`), when the URL has none |
 | `config` | see `values.yaml` | Rendered verbatim to `caliban.toml`, with the same schema as `core/config/caliban.example.toml`. |
@@ -62,7 +63,7 @@ traffic. `router.mode` decides how the routers get their config.
   answers `304`.
 - Tenants, API keys, BYOK credentials and routes created in the console or the admin API
   reach every router within about one poll interval. The `[server]`, `[security]`, `[cache]`,
-  `[pii]` and `[limits]` sections come from the control plane's `config` and ship inside the
+  `[pii]`, `[limits]` and `[routing]` sections come from the control plane's `config` and ship inside the
   snapshot, so editing `config` rolls only the control plane.
 - **Fail-static.** On any error (control plane down, bad signature, invalid or older
   snapshot) a router logs it and keeps serving its last good snapshot. With
@@ -100,6 +101,9 @@ tenants, keys and routes in `config`. No snapshot Secret is needed.
 - A list of maps becomes an `[[array.of.tables]]`.
 - `{env: X}` and `{file: X}` become inline secret references.
 - Scalars and lists of scalars become `key = value`.
+- Strings are written with JSON escapes, which TOML reads the same way. For a newline (as in
+  `routing.query_prefix` for Qwen3-Embedding), write `\n` inside a double-quoted YAML string;
+  in a single-quoted or plain YAML string it stays a literal backslash and `n`.
 
 Helm parses every YAML number as a float, so whole numbers are written as integers.
 `0.0` becomes `0`, which serde accepts for `f64` fields.
