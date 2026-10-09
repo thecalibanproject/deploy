@@ -12,7 +12,9 @@ global:
 nameOverride: ""
 fullnameOverride: ""
 
-# split:      router Deployment (stateless, HPA-ready) + control-plane Deployment.
+# split:      router Deployment (stateless, HPA-ready) + control-plane Deployment. Routers
+#             get their config from the control plane's signed snapshots by default
+#             (router.mode below), which needs the snapshotKeys Secret.
 # standalone: one Deployment running `caliban standalone` (both ports). Small sites.
 mode: split
 
@@ -47,6 +49,36 @@ auth:
   adminToken: ""
   kek: ""
 
+# Split mode with router.mode=snapshot: the control plane signs config snapshots with an
+# Ed25519 key and routers verify them with the public key. Generate both with the image:
+#   eval "$(docker run --rm caliban/caliban:0.1.0 gen-signing-key | sed 's/ *#.*//')"
+#   kubectl create secret generic caliban-snapshot \
+#     --from-literal=signing-key="$CALIBAN_SNAPSHOT_SIGNING_KEY" \
+#     --from-literal=public-key="$CALIBAN_SNAPSHOT_PUBLIC_KEY" \
+#     --from-literal=router-token="$(openssl rand -hex 32)"
+# The control plane reads signing-key and router-token; routers read public-key and
+# router-token (env vars, never the ConfigMap). Not used in standalone or router.mode=static.
+snapshotKeys:
+  existingSecret: caliban-snapshot
+  # Base64 32-byte Ed25519 seed -> CALIBAN_SNAPSHOT_SIGNING_KEY (control plane only).
+  signingKeyKey: signing-key
+  # Base64 32-byte public key -> CALIBAN_SNAPSHOT_PUBLIC_KEY (routers). A comma-separated
+  # list is accepted, so a new key can be trusted before the control plane switches to it.
+  publicKeyKey: public-key
+  # Bearer token for GET /api/v1/snapshot -> CALIBAN_ROUTER_TOKEN (both sides). It is not
+  # the admin token; the snapshot endpoint rejects the admin token.
+  routerTokenKey: router-token
+  # Optional separate Secret for the routers holding only public-key and router-token. The
+  # kubelet fetches whole Secrets, so this keeps the signing key off nodes that run only
+  # routers. Empty = routers read existingSecret.
+  routerExistingSecret: ""
+  # DEV ONLY: let the chart create the Secret from the three values below.
+  # The values end up in the Helm release object; do not use in production.
+  create: false
+  signingKey: ""
+  publicKey: ""
+  routerToken: ""
+
 # BYOK provider keys referenced from config as api_key = { env = "NAME" }.
 # Every key of this Secret becomes an env var of the same name, e.g.
 #   kubectl create secret generic caliban-provider-keys --from-literal=ACME_OPENAI_API_KEY=sk-...
@@ -77,6 +109,9 @@ log: info
 otel:
   endpoint: ""
 
+# Added to EVERY Caliban pod (router, control plane, standalone). Use the per-component
+# router.extraEnv / controlPlane.extraEnv / standalone.extraEnv for anything that must not
+# reach the routers.
 extraEnv: []
 # - name: FOO
 #   value: bar
@@ -228,6 +263,30 @@ probes:
 router:
   replicas: 2
   args: [router]
+  # Where routers get tenants, keys, BYOK credentials, routes and the rest of the config
+  # (mode=split only; ignored in standalone):
+  #   snapshot  (default) poll the control plane's signed snapshots
+  #             (GET /api/v1/snapshot, Ed25519-verified with snapshotKeys). The ConfigMap is
+  #             not mounted. Tenants and keys created in the console reach every router
+  #             within about one poll interval. Fail-static: if the control plane is down or
+  #             a snapshot fails verification, routers keep serving the last good snapshot.
+  #   static    read `config` from the ConfigMap (file-driven routers). Console and admin
+  #             API changes never reach the routers; keep tenants, keys and routes in
+  #             `config`.
+  mode: snapshot
+  snapshot:
+    # Default: the in-release control-plane Service, http://<fullname>-control-plane:<port>.
+    controlPlaneUrl: ""
+    # CALIBAN_SNAPSHOT_POLL_SECS (core adds +/-20% jitter). Unchanged snapshots cost a 304.
+    pollIntervalSeconds: 10
+    # Persist the last good signed snapshot in an emptyDir (CALIBAN_SNAPSHOT_CACHE), so a
+    # router container that restarts while the control plane is down still serves. A new pod
+    # starts with an empty cache and waits for the control plane before it listens.
+    cache:
+      enabled: true
+      sizeLimit: 16Mi
+  # Env for router pods only (appended after the global extraEnv).
+  extraEnv: []
   resources:
     requests: { cpu: 500m, memory: 512Mi }
     limits:   { memory: 1Gi }
@@ -255,6 +314,8 @@ router:
 controlPlane:
   replicas: 1
   args: [control-plane]
+  # Env for control-plane pods only.
+  extraEnv: []
   resources:
     requests: { cpu: 250m, memory: 256Mi }
     limits:   { memory: 512Mi }
@@ -274,6 +335,8 @@ controlPlane:
 standalone:
   replicas: 1
   args: [standalone]
+  # Env for the standalone pod only.
+  extraEnv: []
   resources:
     requests: { cpu: 500m, memory: 512Mi }
     limits:   { memory: 1536Mi }

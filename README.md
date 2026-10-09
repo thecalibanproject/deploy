@@ -55,7 +55,7 @@ Every shape runs the same image and the same binary. Background: §6 of the [ref
 | Shape | Use it for | Caliban | Datastores | Models | Egress |
 |---|---|---|---|---|---|
 | **Single-host compose** (`compose/`) | POCs, small sites, edge, demo appliances | `caliban standalone` (router and control plane in one process) | Postgres 17, Qdrant and Valkey containers | one container per model (vLLM, TEI, llama.cpp or Ollama), one compose profile each | none; BYOK through an opt-in override |
-| **Kubernetes** (`helm/caliban`) | VPC or dedicated clusters, production | `mode: split` (router Deployment with optional HPA, plus control plane) or `mode: standalone` | bring your own (CloudNativePG, Qdrant chart, Valkey chart) | chart `modelPools` (vLLM, SGLang, TEI, llama.cpp), or your own llm-d or Dynamo | default-deny NetworkPolicy; allow-list per provider |
+| **Kubernetes** (`helm/caliban`) | VPC or dedicated clusters, production | `mode: split` (router Deployment with optional HPA, fed signed config snapshots by the control plane) or `mode: standalone` | bring your own (CloudNativePG, Qdrant chart, Valkey chart) | chart `modelPools` (vLLM, SGLang, TEI, llama.cpp), or your own llm-d or Dynamo | default-deny NetworkPolicy; allow-list per provider |
 | **Air-gapped** (`airgap/`) | regulated and classified sites | either of the above, fed from a signed bundle | same | open-weight only, pinned and hashed | none, by construction |
 
 **Ports.** `8080` is the data plane (`/v1/*` OpenAI- and Anthropic-compatible API, `/healthz`). `8081` is the control plane (`/api/v1/*` and the web console at `/`).
@@ -112,6 +112,8 @@ MINT_KEY=1 ../scripts/smoke.sh     # mints a key through the admin API and runs 
 ```
 
 To mint a key offline instead, run `docker compose run --rm caliban keygen` and put the hash in `config/caliban.toml` under `tenants.api_key_hashes` before the first start (see the note on seeding below).
+
+**Health.** The `caliban` service has a Docker healthcheck that runs the binary itself (`caliban healthcheck --addr 127.0.0.1:8080 --path /healthz`), since the distroless image has no shell or curl. `docker compose ps` shows it as `healthy` once it serves, `docker compose up -d --wait` returns only then, and other services can wait for it with `depends_on: { caliban: { condition: service_healthy } }`.
 
 The web console is at `http://127.0.0.1:8081/`; log in with `CALIBAN_ADMIN_TOKEN`. The ports bind to `127.0.0.1` by default (`CALIBAN_BIND`, `CALIBAN_ROUTER_PORT`, `CALIBAN_CP_PORT`). Put a TLS reverse proxy in front before exposing them.
 
@@ -173,15 +175,30 @@ kubectl create ns caliban && kubectl label ns caliban pod-security.kubernetes.io
 kubectl -n caliban create secret generic caliban-auth \
   --from-literal=admin-token="$(openssl rand -hex 32)" --from-literal=kek="$(openssl rand -base64 32)"
 kubectl -n caliban create secret generic caliban-database --from-literal=url='postgres://...'
+# split mode only: snapshot signing key pair and router token
+eval "$(docker run --rm caliban/caliban:0.1.0 gen-signing-key | sed 's/ *#.*//')"
+kubectl -n caliban create secret generic caliban-snapshot \
+  --from-literal=signing-key="$CALIBAN_SNAPSHOT_SIGNING_KEY" \
+  --from-literal=public-key="$CALIBAN_SNAPSHOT_PUBLIC_KEY" \
+  --from-literal=router-token="$(openssl rand -hex 32)"
 helm install caliban helm/caliban -n caliban                                        # connected / VPC
 helm install caliban helm/caliban -n caliban -f helm/caliban/values-airgap.yaml     # air-gapped
 ```
 
-Key values (full table in [`helm/caliban/README.md`](helm/caliban/README.md)): `mode` (`split` or `standalone`; `values-airgap.yaml` uses `standalone`), `global.imageRegistry`, `image.digest`, `auth.existingSecret`, `database.existingSecret`, `providerKeys.existingSecret`, `qdrant.url`, `valkey.url` / `valkey.existingSecret`, `otel.endpoint`, `config` (rendered verbatim to `caliban.toml`), `router.autoscaling.enabled`, `modelPools`, `networkPolicy.*`.
+Key values (full table in [`helm/caliban/README.md`](helm/caliban/README.md)): `mode` (`split` or `standalone`; `values-airgap.yaml` uses `standalone`), `router.mode` (`snapshot` or `static`), `global.imageRegistry`, `image.digest`, `auth.existingSecret`, `database.existingSecret`, `snapshotKeys.existingSecret`, `providerKeys.existingSecret`, `qdrant.url`, `valkey.url` / `valkey.existingSecret`, `otel.endpoint`, `config` (rendered verbatim to `caliban.toml`), `router.autoscaling.enabled`, `modelPools`, `networkPolicy.*`.
 
 Every pod runs as non-root (uid 65532) with a read-only root filesystem, all capabilities dropped, `seccompProfile: RuntimeDefault`, no service-account token and `enableServiceLinks: false`, which meets the `restricted` Pod Security Standard. The NetworkPolicy is default-deny: egress goes only to cluster DNS, the other Caliban pods, the datastores, local model servers and any providers you list.
 
-**Split mode in the chart.** With `mode: split`, routers run `caliban router` and read the rendered `config` from the ConfigMap; core's signed-snapshot split mode (`--control-plane-url`) is not wired into the chart yet. As a result, tenants, keys and BYOK credentials created through the console or admin API reach the control plane but not the routers. Until that lands, either keep tenants and routes in `config`, or use `mode: standalone` if you manage them through the console. Snapshot mode can be enabled by hand by overriding `router.args` with `--control-plane-url` and supplying `CALIBAN_ROUTER_TOKEN`, `CALIBAN_SNAPSHOT_SIGNING_KEY` and `CALIBAN_SNAPSHOT_PUBLIC_KEY` through `extraEnv`. `extraEnv` applies to every Caliban pod, so the signing key would also reach the routers (the chart has no per-component env yet). See core's [split mode](https://github.com/thecalibanproject/core#split-mode).
+**Split mode in the chart.** With `mode: split`, `router.mode` picks where the routers get tenants, keys, BYOK credentials, routes and the rest of the config. See core's [split mode](https://github.com/thecalibanproject/core#split-mode) for the protocol.
+
+- **`snapshot` (default).** Routers run with no config file. They poll `GET /api/v1/snapshot` on the control plane every `router.snapshot.pollIntervalSeconds` (default 10, with ±20% jitter), verify the Ed25519 signature and swap the new config in. Anything created in the console or admin API reaches every router within about one poll interval. The chart wires it up as follows:
+  - The `caliban-snapshot` Secret (`snapshotKeys.existingSecret`) holds `signing-key`, `public-key` and `router-token`. The control plane gets `CALIBAN_SNAPSHOT_SIGNING_KEY` and `CALIBAN_ROUTER_TOKEN`; routers get `CALIBAN_SNAPSHOT_PUBLIC_KEY` and `CALIBAN_ROUTER_TOKEN`, so the signing key never reaches a router container. Set `snapshotKeys.routerExistingSecret` to a Secret holding only the public key and router token to keep the signing key off router-only nodes as well.
+  - Routers reach the control plane at `http://<release>-control-plane:8081` (override with `router.snapshot.controlPlaneUrl`). The NetworkPolicy already allows router-to-control-plane traffic.
+  - Routers keep `CALIBAN_KEK`: sealed BYOK credentials stay sealed inside the snapshot and are opened on the router, and the KEK keeps the per-tenant `cache_salt` identical across routers. Keys referenced as `{ env = "..." }` resolve on the router too, so `providerKeys.existingSecret` is still mounted there.
+  - **Fail-static.** If the control plane is down, or a snapshot fails verification or validation, or is older than the one being served, the router logs it and keeps serving its last good snapshot. The last good snapshot is also written to an `emptyDir` (`router.snapshot.cache.enabled`, `CALIBAN_SNAPSHOT_CACHE`) and re-verified on load, so a router container that restarts while the control plane is down still serves. A brand-new router pod has no cache: it waits for its first snapshot before it listens, so it stays unready until the control plane answers.
+- **`static`.** Routers read the rendered `config` from the ConfigMap. Console and admin API changes reach the control plane only, never the routers, so keep tenants, keys and routes in `config`. No snapshot Secret is needed.
+
+In both modes router pods get no `CALIBAN_ADMIN_TOKEN` and no `CALIBAN_DATABASE_URL`: core reads them only when it builds the control plane. Global `extraEnv` still applies to every Caliban pod; use `router.extraEnv`, `controlPlane.extraEnv` or `standalone.extraEnv` for anything that must stay on one component.
 
 **Model pools.** `modelPools.pools` renders one Deployment and Service per enabled pool (vLLM, SGLang, TEI or llama.cpp; examples in `values.yaml` are disabled). Weights come read-only from a PVC with the bundle's `models/` layout; pools get no egress, accept ingress only from Caliban, request `nvidia.com/gpu` via `gpus: N`, and roll out with `Recreate`. You can also run vLLM, SGLang, llm-d or NVIDIA Dynamo yourself and list them in `networkPolicy.egress.localModels`.
 
@@ -323,7 +340,8 @@ helm rollback caliban <REVISION> -n caliban        # restores the previous manif
 
 - Caliban Deployments roll out with `maxUnavailable: 0`, and in split mode the router PDB keeps at least one router serving.
 - Config changes trigger a rollout through the `checksum/config` annotation.
-- With core's snapshot split mode, upgrade routers before the control plane when a release adds config fields; routers keep serving their last good snapshot while the control plane restarts (fail-static).
+- Upgrading a split-mode release from a chart version without `router.mode`: routers now default to `snapshot`, so create the `caliban-snapshot` Secret (see "Kubernetes (Helm)") before `helm upgrade`, or set `router.mode=static` to keep the old behaviour. Without the Secret, router pods fail with `CreateContainerConfigError` while the old ones keep serving (`maxUnavailable: 0`).
+- In split mode with `router.mode: snapshot`, routers keep serving their last good snapshot while the control plane restarts (fail-static). Core's rule is to upgrade routers before the control plane when a release adds config fields. A single `helm upgrade` rolls both together, and an old router that cannot read a newer snapshot keeps serving its last good one until it is replaced.
 
 **Air-gapped:** the same steps with a new bundle. Keep the previous bundle as rollback media until the new version is accepted.
 
@@ -343,6 +361,8 @@ done
 docker run --rm -v "$PWD":/apps alpine/helm:3 lint --strict /apps/helm/caliban
 docker run --rm -v "$PWD":/apps alpine/helm:3 lint --strict /apps/helm/caliban -f /apps/helm/caliban/values-airgap.yaml
 docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban -f /apps/helm/caliban/values-airgap.yaml
+docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban                          # split, router.mode=snapshot
+docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban --set router.mode=static
 docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -x images/build.sh airgap/*.sh scripts/smoke.sh
 docker buildx build --check -f images/caliban.Dockerfile ..
 ```

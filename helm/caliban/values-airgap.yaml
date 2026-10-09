@@ -14,7 +14,9 @@ image:
   digest: ""
   pullPolicy: IfNotPresent
 
-# Embedded control plane, single Deployment. Switch to "split" to scale routers.
+# Embedded control plane, single Deployment. Switch to "split" to scale routers; routers then
+# poll signed snapshots from the control plane (router.mode=snapshot), which needs the
+# caliban-snapshot Secret (snapshotKeys in values.yaml). Snapshots stay in-cluster.
 mode: standalone
 
 auth:

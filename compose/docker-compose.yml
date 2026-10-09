@@ -119,8 +119,17 @@ services:
         condition: service_healthy
       valkey:
         condition: service_healthy
-    # The image is distroless (no shell/curl), so there is no in-container healthcheck.
-    # Use scripts/smoke.sh from the host. TODO: switch to `caliban healthcheck` once core ships it.
+    # The image is distroless (no shell, no curl), so the probe is the binary itself:
+    # `caliban healthcheck` sends GET <path> to <addr> and exits 0 on a 2xx within 3 s.
+    # Standalone opens (and migrates) the Postgres store before it binds either port, then
+    # serves both from one process, so the data-plane /healthz covers it. To probe the
+    # control plane instead: --addr 127.0.0.1:8081 --path /api/v1/health.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/caliban", "healthcheck", "--addr", "127.0.0.1:8080", "--path", "/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   postgres:
     <<: *hardening

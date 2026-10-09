@@ -1,4 +1,15 @@
-Caliban {{ .Chart.AppVersion }} deployed as "{{ .Release.Name }}" (mode: {{ .Values.mode }}).
+Caliban {{ .Chart.AppVersion }} deployed as "{{ .Release.Name }}" (mode: {{ .Values.mode }}{{ with include "caliban.routerMode" . }}, router.mode: {{ . }}{{ end }}).
+{{- if eq (include "caliban.routerMode" .) "snapshot" }}
+
+Routers poll signed config snapshots from {{ include "caliban.controlPlaneUrl" . }}
+every {{ .Values.router.snapshot.pollIntervalSeconds }}s and do not read the ConfigMap. A router pod waits for its first
+snapshot before it listens; after that it keeps serving the last good snapshot if the
+control plane is unreachable.
+{{- else if eq (include "caliban.routerMode" .) "static" }}
+
+Routers read the ConfigMap (router.mode=static): tenants, keys and routes created in the
+console or admin API do NOT reach them. Keep them in `config`, or use router.mode=snapshot.
+{{- end }}
 
 Image: {{ include "caliban.image" . }}
 
@@ -26,6 +37,14 @@ Quick check:
 Secrets this release reads (create them first unless auth.create=true):
   {{ include "caliban.authSecretName" . }}  keys: {{ .Values.auth.adminTokenKey }}, {{ .Values.auth.kekKey }}
   {{ .Values.database.existingSecret }}  key: {{ .Values.database.urlKey }}
+{{- if eq (include "caliban.routerMode" .) "snapshot" }}
+{{- if eq (include "caliban.snapshotSecretName" .) (include "caliban.snapshotRouterSecretName" .) }}
+  {{ include "caliban.snapshotSecretName" . }}  keys: {{ .Values.snapshotKeys.signingKeyKey }}, {{ .Values.snapshotKeys.publicKeyKey }}, {{ .Values.snapshotKeys.routerTokenKey }}
+{{- else }}
+  {{ include "caliban.snapshotSecretName" . }}  keys: {{ .Values.snapshotKeys.signingKeyKey }}, {{ .Values.snapshotKeys.routerTokenKey }} (control plane)
+  {{ include "caliban.snapshotRouterSecretName" . }}  keys: {{ .Values.snapshotKeys.publicKeyKey }}, {{ .Values.snapshotKeys.routerTokenKey }} (routers)
+{{- end }}
+{{- end }}
 {{- with .Values.providerKeys.existingSecret }}
   {{ . }}  (all keys exposed as env vars for BYOK)
 {{- end }}
@@ -40,6 +59,10 @@ WARNING: networkPolicy.enabled=false. Pods have unrestricted egress.
 {{- if .Values.auth.create }}
 
 WARNING: auth.create=true stores the admin token and KEK in the Helm release. Dev only.
+{{- end }}
+{{- if and .Values.snapshotKeys.create (eq (include "caliban.routerMode" .) "snapshot") }}
+
+WARNING: snapshotKeys.create=true stores the snapshot signing key in the Helm release. Dev only.
 {{- end }}
 
 Recommended namespace label:

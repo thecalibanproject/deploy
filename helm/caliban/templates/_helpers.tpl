@@ -71,6 +71,43 @@ app.kubernetes.io/part-of: caliban
 {{- end -}}
 {{- end -}}
 
+{{/* ───────────── split mode: router config source ─────────────
+  "snapshot" when mode=split and router.mode=snapshot (the default): routers poll signed
+  snapshots from the control plane. "static": routers read the ConfigMap. "" in standalone.
+*/}}
+
+{{- define "caliban.routerMode" -}}
+{{- if eq .Values.mode "split" -}}
+{{- $m := .Values.router.mode | default "snapshot" -}}
+{{- if not (has $m (list "snapshot" "static")) -}}
+{{- fail (printf "router.mode must be 'snapshot' or 'static', got %q" $m) -}}
+{{- end -}}
+{{- $m -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Secret the control plane reads: signing key and router token. */}}
+{{- define "caliban.snapshotSecretName" -}}
+{{- if .Values.snapshotKeys.create -}}
+{{- printf "%s-snapshot" (include "caliban.fullname" .) -}}
+{{- else -}}
+{{- required "snapshotKeys.existingSecret is required with router.mode=snapshot (or set router.mode=static, or snapshotKeys.create=true for dev)" .Values.snapshotKeys.existingSecret -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Secret the routers read: public key and router token. Defaults to the one above. */}}
+{{- define "caliban.snapshotRouterSecretName" -}}
+{{- if and (not .Values.snapshotKeys.create) .Values.snapshotKeys.routerExistingSecret -}}
+{{- .Values.snapshotKeys.routerExistingSecret -}}
+{{- else -}}
+{{- include "caliban.snapshotSecretName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "caliban.controlPlaneUrl" -}}
+{{- .Values.router.snapshot.controlPlaneUrl | default (printf "http://%s-control-plane:%v" (include "caliban.fullname" .) .Values.controlPlane.service.port) -}}
+{{- end -}}
+
 {{/* ───────────── TOML rendering ─────────────
   Values under .Values.config are rendered as TOML:
     scalar / list of scalars      -> key = value
@@ -185,6 +222,18 @@ app.kubernetes.io/component: {{ .component }}
 {{- else if eq $c "standalone" -}}
 {{- $ready = dict "path" "/api/v1/health" "port" "admin" -}}
 {{- end -}}
+{{- /* Split mode with router.mode=snapshot: routers take their config from the control
+       plane and do not mount the ConfigMap; the control plane signs the snapshots. */ -}}
+{{- $snapshot := eq (include "caliban.routerMode" $root) "snapshot" -}}
+{{- $isRouter := eq $c "router" -}}
+{{- $snapRouter := and $isRouter $snapshot -}}
+{{- $snapCP := and (eq $c "control-plane") $snapshot -}}
+{{- $useConfig := not $snapRouter -}}
+{{- $snapCache := and $snapRouter $root.Values.router.snapshot.cache.enabled -}}
+{{- if $snapRouter -}}
+{{- $poll := int $root.Values.router.snapshot.pollIntervalSeconds -}}
+{{- if lt $poll 1 -}}{{- fail "router.snapshot.pollIntervalSeconds must be >= 1" -}}{{- end -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -214,11 +263,15 @@ spec:
         {{- with $cv.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- if or $useConfig $cv.podAnnotations }}
       annotations:
+        {{- if $useConfig }}
         checksum/config: {{ include "caliban.toml" $root | sha256sum }}
+        {{- end }}
         {{- with $cv.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "caliban.serviceAccountName" $root }}
       automountServiceAccountToken: {{ $root.Values.serviceAccount.automountServiceAccountToken }}
@@ -243,29 +296,69 @@ spec:
               protocol: TCP
             {{- end }}
           env:
+            {{- if $useConfig }}
             - name: CALIBAN_CONFIG
               value: /etc/caliban/caliban.toml
-            - name: CALIBAN_WEB_DIR
-              value: /usr/share/caliban/web
+            {{- end }}
             - name: CALIBAN_LOG
               value: {{ $root.Values.log | quote }}
-            # TODO(core): the router does not need the admin token once config loading
-            # resolves secret refs lazily per component; drop it from router pods then.
+            {{- if not $isRouter }}
+            # Control plane only: routers never read the admin token or the database
+            # (core reads both only when it builds the control plane).
+            - name: CALIBAN_WEB_DIR
+              value: /usr/share/caliban/web
             - name: CALIBAN_ADMIN_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ include "caliban.authSecretName" $root }}
                   key: {{ $root.Values.auth.adminTokenKey }}
-            - name: CALIBAN_KEK
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "caliban.authSecretName" $root }}
-                  key: {{ $root.Values.auth.kekKey }}
             - name: CALIBAN_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ required "database.existingSecret is required" $root.Values.database.existingSecret }}
                   key: {{ $root.Values.database.urlKey }}
+            {{- end }}
+            # Every component: opens sealed BYOK credentials (they stay sealed inside
+            # snapshots) and derives the per-tenant cache_salt, which must match across routers.
+            - name: CALIBAN_KEK
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.authSecretName" $root }}
+                  key: {{ $root.Values.auth.kekKey }}
+            {{- if $snapCP }}
+            # Split mode: sign config snapshots for the routers (GET /api/v1/snapshot).
+            - name: CALIBAN_SNAPSHOT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.snapshotSecretName" $root }}
+                  key: {{ $root.Values.snapshotKeys.signingKeyKey }}
+            - name: CALIBAN_ROUTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.snapshotSecretName" $root }}
+                  key: {{ $root.Values.snapshotKeys.routerTokenKey }}
+            {{- end }}
+            {{- if $snapRouter }}
+            # Split mode: config comes from signed control-plane snapshots, not the ConfigMap.
+            - name: CALIBAN_CONTROL_PLANE_URL
+              value: {{ include "caliban.controlPlaneUrl" $root | quote }}
+            - name: CALIBAN_ROUTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.snapshotRouterSecretName" $root }}
+                  key: {{ $root.Values.snapshotKeys.routerTokenKey }}
+            - name: CALIBAN_SNAPSHOT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.snapshotRouterSecretName" $root }}
+                  key: {{ $root.Values.snapshotKeys.publicKeyKey }}
+            - name: CALIBAN_SNAPSHOT_POLL_SECS
+              value: {{ int $root.Values.router.snapshot.pollIntervalSeconds | quote }}
+            {{- if $snapCache }}
+            - name: CALIBAN_SNAPSHOT_CACHE
+              value: /var/lib/caliban/snapshot.json
+            {{- end }}
+            {{- end }}
             - name: CALIBAN_QDRANT_URL
               value: {{ $root.Values.qdrant.url | quote }}
             {{- if $root.Values.valkey.existingSecret }}
@@ -283,6 +376,9 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- with $root.Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- with $cv.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- if or $root.Values.providerKeys.existingSecret $root.Values.extraEnvFrom }}
@@ -309,24 +405,40 @@ spec:
           securityContext:
             {{- toYaml $root.Values.containerSecurityContext | nindent 12 }}
           volumeMounts:
+            {{- if $useConfig }}
             - name: config
               mountPath: /etc/caliban
               readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
+            {{- if $snapCache }}
+            - name: snapshot-cache
+              mountPath: /var/lib/caliban
+            {{- end }}
             {{- with $root.Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
+        {{- if $useConfig }}
         - name: config
           configMap:
             name: {{ include "caliban.fullname" $root }}-config
             items:
               - key: caliban.toml
                 path: caliban.toml
+        {{- end }}
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        {{- if $snapCache }}
+        # Last good signed snapshot (written 0600, re-verified on load). An emptyDir survives
+        # container restarts, so a router restarted while the control plane is down keeps
+        # serving; a new pod still needs the control plane once.
+        - name: snapshot-cache
+          emptyDir:
+            sizeLimit: {{ $root.Values.router.snapshot.cache.sizeLimit }}
+        {{- end }}
         {{- with $root.Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
