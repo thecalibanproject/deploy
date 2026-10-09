@@ -69,7 +69,7 @@ deploy/images/build.sh vendor
 deploy/images/build.sh --offline --version 0.1.0
 ```
 
-The base images (`node:24-slim`, `rust:1-slim-bookworm`, `gcr.io/distroless/cc-debian12:nonroot`)
+The base images (`node:24-slim`, `rust:1-trixie`, `gcr.io/distroless/cc-debian13:nonroot`)
 must be present or mirrored when building offline. Pin them by digest with
 `--build-arg RUST_IMAGE=...@sha256:...` for reproducible builds.
 

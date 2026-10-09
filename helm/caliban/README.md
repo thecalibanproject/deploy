@@ -91,9 +91,9 @@ serving one model: vLLM, SGLang, TEI or llama.cpp. `values.yaml` ships disabled 
 | `qwen3-large` | Qwen3.8-27B-FP8 | 1 × 48 GB GPU, or 1 × 80 GB at 262k context |
 | `qwen3-moe` | Qwen3.6-35B-A3B-FP8 | same as `qwen3-large` |
 | `qwen3-xl` | Qwen3.5-122B-A10B-FP8 on SGLang, TP2 | 2 × 80 GB |
-| `gpt-oss` | gpt-oss-20b | — |
-| `embed` | Qwen3-Embedding-0.6B on TEI | — |
-| `rerank` | Qwen3-Reranker-0.6B on vLLM's pooling runner | — |
+| `gpt-oss` | gpt-oss-20b |: |
+| `embed` | Qwen3-Embedding-0.6B on TEI |: |
+| `rerank` | Qwen3-Reranker-0.6B on vLLM's pooling runner |: |
 | `qwen3-cpu` | Qwen3.6-35B-A3B Q4_K_M on llama.cpp | CPU only |
 
 How pools behave:
