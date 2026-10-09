@@ -196,7 +196,7 @@ Every pod runs as non-root (uid 65532) with a read-only root filesystem, all cap
 - **`snapshot` (default).** Routers run with no config file. They poll `GET /api/v1/snapshot` on the control plane every `router.snapshot.pollIntervalSeconds` (default 10, with ±20% jitter), verify the Ed25519 signature and swap the new config in. Anything created in the console or admin API reaches every router within about one poll interval. The chart wires it up as follows:
   - The `caliban-snapshot` Secret (`snapshotKeys.existingSecret`) holds `signing-key`, `public-key` and `router-token`. The control plane gets `CALIBAN_SNAPSHOT_SIGNING_KEY` and `CALIBAN_ROUTER_TOKEN`; routers get `CALIBAN_SNAPSHOT_PUBLIC_KEY` and `CALIBAN_ROUTER_TOKEN`, so the signing key never reaches a router container. Set `snapshotKeys.routerExistingSecret` to a Secret holding only the public key and router token to keep the signing key off router-only nodes as well.
   - Routers reach the control plane at `http://<release>-control-plane:8081` (override with `router.snapshot.controlPlaneUrl`). The NetworkPolicy already allows router-to-control-plane traffic.
-  - Routers keep `CALIBAN_KEK`: sealed BYOK credentials stay sealed inside the snapshot and are opened on the router, and the KEK keeps the per-tenant `cache_salt` identical across routers. Keys referenced as `{ env = "..." }` resolve on the router too, so `providerKeys.existingSecret` is still mounted there.
+  - Routers keep `CALIBAN_KEK` (and `CALIBAN_KEK_PREVIOUS` during a KEK rotation): BYOK credentials stay sealed inside the snapshot (each wrapped with its tenant's data key) and are opened on the router, and the KEK keeps the per-tenant `cache_salt` identical across routers. Keys referenced as `{ env = "..." }` resolve on the router too, so `providerKeys.existingSecret` is still mounted there.
   - **Fail-static.** If the control plane is down, or a snapshot fails verification or validation, or is older than the one being served, the router logs it and keeps serving its last good snapshot. The last good snapshot is also written to an `emptyDir` (`router.snapshot.cache.enabled`, `CALIBAN_SNAPSHOT_CACHE`) and re-verified on load, so a router container that restarts while the control plane is down still serves. A brand-new router pod has no cache: it waits for its first snapshot before it listens, so it stays unready until the control plane answers.
 - **`static`.** Routers read the rendered `config` from the ConfigMap. Console and admin API changes reach the control plane only, never the routers, so keep tenants, keys and routes in `config`. No snapshot Secret is needed.
 
@@ -264,7 +264,8 @@ These are **estimates; benchmark per site.** The model-serving numbers come from
 
 **Secrets and keys**
 
-- [ ] `CALIBAN_KEK` is 32 random bytes, stored in a vault, HSM or sealed secret, **backed up offline**, and never in git or Helm values (`auth.create=false`). Losing it makes every stored BYOK key unrecoverable.
+- [ ] `CALIBAN_KEK` is 32 random bytes, stored in a vault, HSM or sealed secret, **backed up offline**, and never in git or Helm values (`auth.create=false`). Losing it makes every stored BYOK key and datasource credential unrecoverable.
+- [ ] You have a KEK rotation schedule (`CALIBAN_KEK_PREVIOUS`, `caliban keys rotate`; see `compose/.env.example`, the Helm README and the core README, "KEK rotation"), including after deleting a tenant, and retired KEKs are destroyed when the backups that predate the rotation expire.
 - [ ] `CALIBAN_ADMIN_TOKEN` is 32+ random bytes and rotated on staff changes.
 - [ ] Postgres and Valkey have unique strong passwords. Postgres uses `scram-sha-256` and TLS (`sslmode=require`) when it runs off-host.
 - [ ] `.env` is `chmod 600` and owned by the service account.
@@ -288,7 +289,7 @@ These are **estimates; benchmark per site.** The model-serving numbers come from
 
 There are two ways to give Caliban a tenant's provider key.
 
-1. **Admin console or API (recommended).** The key is sealed with AES-256-GCM under `CALIBAN_KEK` before it is stored, and it is never returned.
+1. **Admin console or API (recommended).** The key is sealed with AES-256-GCM under the tenant's data key (itself wrapped by `CALIBAN_KEK`) before it is stored, and it is never returned. Deleting the tenant destroys that data key.
 
    ```bash
    curl -X POST http://127.0.0.1:8081/api/v1/tenants/acme/provider-keys \

@@ -79,7 +79,8 @@ Where the keys go:
 | `CALIBAN_SNAPSHOT_SIGNING_KEY` | control plane | `snapshotKeys.existingSecret`, key `signing-key` (base64 32-byte Ed25519 seed) |
 | `CALIBAN_ROUTER_TOKEN` | control plane and routers | key `router-token` (any random string; not the admin token) |
 | `CALIBAN_SNAPSHOT_PUBLIC_KEY` | routers | key `public-key` (base64; a comma-separated list is accepted for rotation) |
-| `CALIBAN_KEK` | all | `auth.existingSecret`; routers open sealed BYOK credentials and derive the tenant `cache_salt` with it |
+| `CALIBAN_KEK` | all | `auth.existingSecret`; wraps the per-tenant data keys; routers open sealed BYOK credentials and derive the tenant `cache_salt` with it |
+| `CALIBAN_KEK_PREVIOUS` | all | optional key `kek-previous` of `auth.existingSecret` (`auth.kekPreviousKey`): retired KEKs, only during a KEK rotation |
 | `CALIBAN_ADMIN_TOKEN`, `CALIBAN_DATABASE_URL` | control plane, standalone | never on routers; core reads them only for the control plane |
 
 `caliban gen-signing-key` prints a matching `CALIBAN_SNAPSHOT_SIGNING_KEY` and
@@ -90,6 +91,19 @@ not checksum Secrets, so restart the Deployments yourself after changing them
 1. Set `public-key` to `<old>,<new>` and restart the routers.
 2. Set `signing-key` to the new seed and restart the control plane.
 3. Set `public-key` to `<new>` and restart the routers.
+
+To rotate the KEK (core README, "KEK rotation"):
+
+1. Set `kek` to a new key (`caliban gen-kek`) and `kek-previous` to the old one, then restart
+   the routers, then the control plane.
+2. `kubectl exec deploy/<release>-control-plane -- caliban keys rotate` (re-wraps every tenant
+   data key and re-seals shared provider keys; audited).
+3. When `kubectl exec deploy/<release>-control-plane -- caliban keys status` shows
+   `"previous_keks_still_needed": []` and the routers have polled once, remove `kek-previous`
+   and restart everything.
+4. Keep the old key offline only as long as you keep backups taken before the rotation, then
+   destroy it. Without it, those backups' BYOK keys and datasource credentials cannot be opened
+   (for any tenant), which is also what makes a deleted tenant's keys unrecoverable from them.
 
 **`static`.** Routers run `caliban router` against the ConfigMap, like a file-driven
 deployment. Changes made in the console or the admin API stay on the control plane, so keep

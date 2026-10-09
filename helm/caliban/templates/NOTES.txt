@@ -35,7 +35,7 @@ Quick check:
   ./scripts/smoke.sh
 
 Secrets this release reads (create them first unless auth.create=true):
-  {{ include "caliban.authSecretName" . }}  keys: {{ .Values.auth.adminTokenKey }}, {{ .Values.auth.kekKey }}
+  {{ include "caliban.authSecretName" . }}  keys: {{ .Values.auth.adminTokenKey }}, {{ .Values.auth.kekKey }} (and {{ .Values.auth.kekPreviousKey }} during a KEK rotation)
   {{ .Values.database.existingSecret }}  key: {{ .Values.database.urlKey }}
 {{- if eq (include "caliban.routerMode" .) "snapshot" }}
 {{- if eq (include "caliban.snapshotSecretName" .) (include "caliban.snapshotRouterSecretName" .) }}

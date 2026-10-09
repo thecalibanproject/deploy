@@ -215,6 +215,8 @@ kubectl create ns caliban
 kubectl label ns caliban pod-security.kubernetes.io/enforce=restricted
 kubectl -n caliban create secret generic caliban-auth \
   --from-literal=admin-token="$(openssl rand -hex 32)" --from-literal=kek="$(openssl rand -base64 32)"
+# KEK rotation later: add --from-literal=kek-previous=<old kek> next to the new kek, then
+# `caliban keys rotate` (Helm README, "To rotate the KEK"). Back up every KEK offline.
 kubectl -n caliban create secret generic caliban-pg-app --from-literal=uri='postgres://...'
 kubectl -n caliban create secret generic caliban-valkey --from-literal=url='redis://:...@valkey:6379/0'
 helm install caliban caliban-bundle-0.1.0/deploy/helm/caliban -n caliban \

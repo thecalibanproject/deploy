@@ -327,6 +327,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "caliban.authSecretName" $root }}
                   key: {{ $root.Values.auth.kekKey }}
+            # Retired KEKs, present in the Secret only during a rotation.
+            - name: CALIBAN_KEK_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.authSecretName" $root }}
+                  key: {{ $root.Values.auth.kekPreviousKey }}
+                  optional: true
             {{- if $snapCP }}
             # Split mode: sign config snapshots for the routers (GET /api/v1/snapshot).
             - name: CALIBAN_SNAPSHOT_SIGNING_KEY

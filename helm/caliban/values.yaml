@@ -43,11 +43,15 @@ auth:
   existingSecret: caliban-auth
   adminTokenKey: admin-token
   kekKey: kek
-  # DEV ONLY: let the chart create the Secret from the two values below.
+  # Optional key in the same Secret with retired KEKs (base64, comma separated), set only during
+  # a KEK rotation and read as CALIBAN_KEK_PREVIOUS. See README "KEK rotation".
+  kekPreviousKey: kek-previous
+  # DEV ONLY: let the chart create the Secret from the values below.
   # The values end up in the Helm release object; do not use in production.
   create: false
   adminToken: ""
   kek: ""
+  kekPrevious: ""
 
 # Split mode with router.mode=snapshot: the control plane signs config snapshots with an
 # Ed25519 key and routers verify them with the public key. Generate both with the image:

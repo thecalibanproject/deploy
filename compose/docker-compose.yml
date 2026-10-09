@@ -92,6 +92,8 @@ services:
       CALIBAN_LOG: ${CALIBAN_LOG:-info}
       CALIBAN_ADMIN_TOKEN: ${CALIBAN_ADMIN_TOKEN:?set CALIBAN_ADMIN_TOKEN in .env}
       CALIBAN_KEK: ${CALIBAN_KEK:?set CALIBAN_KEK in .env (base64, 32 bytes)}
+      # Retired KEKs during a rotation only (see .env.example).
+      CALIBAN_KEK_PREVIOUS: ${CALIBAN_KEK_PREVIOUS:-}
       CALIBAN_DATABASE_URL: postgres://caliban:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caliban
       CALIBAN_QDRANT_URL: http://qdrant:6333
       CALIBAN_VALKEY_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env}@valkey:6379/0
