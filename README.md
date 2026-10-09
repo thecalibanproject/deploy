@@ -60,7 +60,7 @@ Every shape runs the same image and the same binary. Background: §6 of the [ref
 
 **Ports.** `8080` is the data plane (`/v1/*` OpenAI- and Anthropic-compatible API, `/healthz`). `8081` is the control plane (`/api/v1/*` and the web console at `/`).
 
-**Datastores.** Postgres is the control plane's store: it holds tenants, keys, sealed BYOK credentials, the catalogue, routes and the hash-chained audit log, and core applies its migrations at start-up. Qdrant and Valkey are provisioned and wired in (`CALIBAN_QDRANT_URL`, `CALIBAN_VALKEY_URL`) for the semantic cache, retrieval index and multi-router quota store; those features are still in progress in core, and the current binary does not connect to them yet.
+**Datastores.** Postgres is the control plane's store: it holds tenants, keys, sealed BYOK credentials, the catalogue, routes and the hash-chained audit log, and core applies its migrations at start-up. Valkey holds the rate limits and token budgets (`CALIBAN_VALKEY_URL`, `[limits] store = "valkey"` in the shipped configs), so every router enforces the same quotas; if it is unreachable, each router limits locally and `/healthz` reports `quota.state: degraded`. Qdrant is provisioned and wired in (`CALIBAN_QDRANT_URL`) for the semantic cache and retrieval index; those features are still in progress in core, and the current binary does not connect to Qdrant yet.
 
 ## Build the image
 

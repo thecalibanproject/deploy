@@ -371,6 +371,13 @@ spec:
             - name: CALIBAN_VALKEY_URL
               value: {{ $root.Values.valkey.url | quote }}
             {{- end }}
+            {{- with $root.Values.valkey.passwordSecret }}
+            - name: CALIBAN_VALKEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $root.Values.valkey.passwordKey }}
+            {{- end }}
             {{- with $root.Values.otel.endpoint }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ . | quote }}

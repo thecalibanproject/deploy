@@ -97,10 +97,15 @@ qdrant:
   url: http://qdrant:6334
 
 valkey:
-  # Used when existingSecret is empty. Put passwords in a Secret instead.
+  # Shared quota store (config.limits.store = valkey). Used when existingSecret is empty.
+  # Put passwords in a Secret instead: either the whole URL (existingSecret/urlKey), or only the
+  # password (passwordSecret/passwordKey, e.g. the official valkey chart's auth secret).
+  # rediss://... for TLS.
   url: redis://valkey:6379
   existingSecret: ""
   urlKey: url
+  passwordSecret: ""
+  passwordKey: password
 
 # tracing filter, e.g. "info,caliban=debug"
 log: info
@@ -138,6 +143,11 @@ config:
     exact_ttl_secs: 3600
   pii:
     default_mode: reversible
+  # Rate limits and budgets, shared by every router through Valkey (CALIBAN_VALKEY_URL from
+  # `valkey` above). While Valkey is unreachable each router limits locally and /healthz shows
+  # quota.state = degraded. Limits: core/config/caliban.example.toml.
+  limits:
+    store: valkey
   # Deployment-wide model servers shared by all tenants (on-prem pools). Hostnames are the
   # Service names of modelPools.pools below (same namespace), or your own engine's Service.
   # cache_salt = true only for vLLM / SGLang (per-tenant prefix-cache isolation).

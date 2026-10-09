@@ -53,6 +53,11 @@ config:
     exact_ttl_secs: 3600
   pii:
     default_mode: reversible
+  # Rate limits and budgets, shared through Valkey (CALIBAN_VALKEY_URL from the caliban-valkey
+  # Secret). While Valkey is unreachable each router limits locally and /healthz shows
+  # quota.state = degraded. Limits: core/config/caliban.example.toml.
+  limits:
+    store: valkey
   # Open-weight, Apache-2.0 only (see airgap/models.lock.yaml), served by the in-release
   # modelPools below. No BYOK provider = no internet path at all.
   providers:

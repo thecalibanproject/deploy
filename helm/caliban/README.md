@@ -38,7 +38,8 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `database.existingSecret` | `caliban-database` | Key `url`: the Postgres DSN. |
 | `providerKeys.existingSecret` | `""` | Every key becomes an env var, for `api_key = { env = "..." }` refs. Mounted on routers too, since refs resolve where the request is served. |
 | `extraEnv` | `[]` | Added to every Caliban pod. `router.extraEnv`, `controlPlane.extraEnv` and `standalone.extraEnv` add env to one component only. |
-| `qdrant.url` / `valkey.url` / `valkey.existingSecret` | in-namespace defaults | |
+| `qdrant.url` / `valkey.url` / `valkey.existingSecret` | in-namespace defaults | Valkey holds the quotas shared by all routers (`config.limits.store: valkey`) |
+| `valkey.passwordSecret` / `valkey.passwordKey` | `""` / `password` | Optional: Valkey password from its own Secret (`CALIBAN_VALKEY_PASSWORD`), when the URL has none |
 | `config` | see `values.yaml` | Rendered verbatim to `caliban.toml`, with the same schema as `core/config/caliban.example.toml`. |
 | `router.autoscaling.enabled` | `false` | Turns on the HPA (CPU, optionally memory). Replicas are then left to the HPA. |
 | `networkPolicy.enabled` | `true` | Default-deny ingress and egress, plus an explicit allow-list. |

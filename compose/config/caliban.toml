@@ -43,6 +43,13 @@ exact_ttl_secs = 3600
 [pii]
 default_mode = "reversible"
 
+# Rate limits and budgets live in the valkey service (CALIBAN_VALKEY_URL in docker-compose.yml),
+# so they survive a caliban restart and hold if you run more than one caliban container. If
+# Valkey is unreachable, caliban limits locally and /healthz shows quota.state = "degraded".
+# Add limits here (see core/config/caliban.example.toml), e.g. requests_per_minute = 600.
+[limits]
+store = "valkey"
+
 # ═════════════════════ Shared model servers (on-prem pools) ═════════════════════
 # Host names match the docker-compose service names; in Kubernetes, the Helm `modelPools`
 # Service names. cache_salt = true only on engines that accept the request field:
