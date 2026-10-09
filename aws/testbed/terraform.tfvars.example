@@ -1,0 +1,32 @@
+# Copy to terraform.tfvars (git-ignored) and adjust. Nothing here is committed with real values.
+
+# aws_profile = "default"
+# allowed_account_ids = ["<12-digit account id>"]   # refuse to run against any other account
+
+# What to bring up (defaults: gateway + loadgen, no routers, no GPU)
+# gateway_enabled = true
+# loadgen_enabled = true
+# router_count    = 0
+# gpu_enabled     = false
+# gpu_market      = "spot"        # or "on-demand" when spot capacity is short
+
+# Network: public | private | isolated, optionally per role
+# network_mode       = "public"
+# role_network_mode  = { gateway = "isolated", loadgen = "isolated" }
+# enable_nat_gateway = false
+# enable_flow_logs   = false
+
+# Caliban image: build on the host from GitHub, or load an airgap bundle from the bucket
+# image_source    = "build"
+# core_ref        = "main"
+# caliban_version = "0.1.0"
+# bundle_verify   = "minisign"
+# bundle_pubkey   = <<-EOT
+#   untrusted comment: minisign public key ...
+#   RW...
+# EOT
+
+# Safety
+# ttl_hours            = 4
+# bucket_force_destroy = false
+# results_upload       = true

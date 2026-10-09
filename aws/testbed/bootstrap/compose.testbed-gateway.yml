@@ -1,0 +1,56 @@
+# AWS testbed override for the gateway host. Applied on top of compose/docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-gateway.yml up -d
+#
+# What it changes, and why (testbed only, not a production layout):
+#   caliban    replaces the `edge` network (masquerade off) with `testbed-out` (masquerade on),
+#              so it can call model servers and mock upstreams on other VPC hosts. The VPC
+#              security groups, not Docker, are what limit where that traffic can go.
+#              It also gets the split-mode snapshot signing key and router token, and reads
+#              the config rendered by the bootstrap script (base_urls may point at the GPU host).
+#   postgres, valkey, qdrant
+#              join `testbed-in` (masquerade off: no route out) so their ports can be
+#              published on the host's private IP for split-mode routers and benchmarks.
+services:
+  caliban:
+    environment:
+      CALIBAN_SNAPSHOT_SIGNING_KEY: ${CALIBAN_SNAPSHOT_SIGNING_KEY:?set by the testbed bootstrap}
+      CALIBAN_ROUTER_TOKEN: ${CALIBAN_ROUTER_TOKEN:?set by the testbed bootstrap}
+    volumes:
+      - ${TESTBED_CALIBAN_TOML:-/opt/caliban-testbed/caliban.toml}:/etc/caliban/caliban.toml:ro
+    networks: !override
+      - backend
+      - testbed-out
+
+  postgres:
+    networks:
+      - backend
+      - testbed-in
+    ports:
+      - "${TESTBED_BIND:?set by the testbed bootstrap}:5432:5432"
+
+  valkey:
+    networks:
+      - backend
+      - testbed-in
+    ports:
+      - "${TESTBED_BIND:?set by the testbed bootstrap}:6379:6379"
+
+  qdrant:
+    networks:
+      - backend
+      - testbed-in
+    ports:
+      - "${TESTBED_BIND:?set by the testbed bootstrap}:6333:6333"
+      - "${TESTBED_BIND:?set by the testbed bootstrap}:6334:6334"
+
+networks:
+  testbed-in:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-caliban-tbin
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+  testbed-out:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-caliban-tbout

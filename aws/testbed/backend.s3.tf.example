@@ -1,0 +1,17 @@
+# Optional S3 backend. Copy to backend.tf (git-ignored), fill in, then run
+#   tofu init -migrate-state
+#
+# The state bucket is NOT created by this module (it would be destroyed with the testbed).
+# Create it once by hand with versioning and default encryption, in the same account.
+# OpenTofu 1.10+ and Terraform 1.11+ lock with an S3 lock file (use_lockfile), so no
+# DynamoDB table is needed.
+terraform {
+  backend "s3" {
+    bucket       = "<your-state-bucket>"
+    key          = "caliban/testbed/terraform.tfstate"
+    region       = "eu-central-1"
+    profile      = "default"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

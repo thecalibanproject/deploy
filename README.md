@@ -45,6 +45,8 @@ deploy/
 │   ├── images.lock                pinned images
 │   ├── models.lock.yaml           pinned weights per tier (Apache-2.0 / MIT by default)
 │   └── README.md                  full offline procedure
+├── aws/testbed/                   OpenTofu: short-lived AWS test environment (benchmarks, GPU tier,
+│                                  zero-egress install); see its README
 └── scripts/smoke.sh               health + chat completion check against a running deployment
 ```
 
@@ -210,6 +212,14 @@ See [airgap/README.md](airgap/README.md) for the full procedure. In short:
 2. **Site.** `load.sh caliban-bundle-<v>.tar --pubkey <file>` checks the signature against a public key received out of band, verifies every file, refuses unlisted files and unsafe paths, then `docker load`s the images or, with `--registry`, pushes them to the site registry. `--models-dest` copies the weights and `--env-out` writes compose image overrides.
 
 `--profile` takes the compose profile names plus `k8s` (Helm-only weights), `all` (default) and `none` (Caliban and datastores only). The default bundle contains only Apache-2.0 and MIT weights; `bundle.sh` refuses other licences unless you pass `--allow-licence <id>` after legal review.
+
+## AWS testbed
+
+[`aws/testbed/`](aws/testbed/README.md) is OpenTofu code for a short-lived test environment in eu-central-1 that runs this repo's compose stack, images and bundles on EC2. It covers four runbooks: the gateway overhead benchmark, split mode with N routers and a shared Valkey, the 1 × 48 GB GPU tier (Qwen3.8-27B-FP8, Qwen3-Embedding-0.6B and Qwen3-Reranker-0.6B on an L40S), and a zero-egress install from an offline bundle in a subnet with no internet route.
+
+- Every host is off unless enabled. Access is SSM Session Manager only, with no SSH and no inbound port from outside the VPC.
+- Hosts stop themselves after `ttl_hours` (default 4), and `tofu destroy` removes everything.
+- Read its README for the prerequisites, the cost table and the teardown checklist before the first apply.
 
 ## Sizing rules of thumb
 

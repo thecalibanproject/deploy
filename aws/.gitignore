@@ -1,0 +1,25 @@
+# OpenTofu / Terraform working files. State holds generated secrets: never commit it.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.plan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Variable files carry account ids, e-mail addresses and keys. Commit only *.example.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Optional S3 backend config (bucket and table names are account specific).
+backend.tf
+*.s3.tfbackend
+!*.s3.tfbackend.example
+
+# Local bench output pulled from the bucket
+results/
