@@ -1,0 +1,35 @@
+# Opt-in override: give ONLY the caliban container a route to the internet so it can call
+# the BYOK providers declared in config/caliban.toml. Everything else stays on the
+# internal backend network.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.byok-egress.yml --profile qwen3-small up -d
+#
+# This opens L3 egress for caliban to any destination. Caliban's own
+# `security.egress = "deny_by_default"` limits it to the declared provider base_urls,
+# but for defence in depth ALSO restrict the egress bridge on the host, e.g.:
+#
+#   # allow DNS + HTTPS to the provider ranges only, drop the rest (iptables, DOCKER-USER)
+#   iptables -I DOCKER-USER -i br-caliban-egr -j DROP
+#   iptables -I DOCKER-USER -i br-caliban-egr -p udp --dport 53 -d <your-resolver> -j ACCEPT
+#   iptables -I DOCKER-USER -i br-caliban-egr -p tcp --dport 443 -m set --match-set caliban_providers dst -j ACCEPT
+#   iptables -I DOCKER-USER -o br-caliban-egr -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+#
+# or route it through your corporate egress proxy (set HTTPS_PROXY / NO_PROXY below).
+# See README.md "BYOK and egress".
+
+services:
+  caliban:
+    networks:
+      - backend
+      - edge
+      - egress
+    environment:
+      HTTPS_PROXY: ${CALIBAN_HTTPS_PROXY:-}
+      NO_PROXY: ${CALIBAN_NO_PROXY:-qwen3-small,qwen3-large,qwen3-moe,gpt-oss,qwen3-cpu,embed,rerank,rerank-bge,ollama,postgres,qdrant,valkey,localhost,127.0.0.1}
+
+networks:
+  egress:
+    driver: bridge
+    driver_opts:
+      # Stable bridge name so host firewall rules can target it.
+      com.docker.network.bridge.name: br-caliban-egr

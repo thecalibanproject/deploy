@@ -1,0 +1,210 @@
+{{- /*
+  Model pools: one Deployment + Service (+ optional PVC) per enabled entry of
+  .Values.modelPools.pools. Each pool is an OpenAI-compatible inference engine (vLLM, SGLang,
+  TEI, llama.cpp, ...) serving ONE model. Values not set on a pool fall back to
+  .Values.modelPools.defaults (see values.yaml for the field list).
+  The Service is named after the pool (no release prefix), so config.providers[].base_url can
+  be written as http://<pool name>:<port>/v1.
+  NetworkPolicy (networkpolicy.yaml): pools get no egress at all, and ingress only from the
+  Caliban router/standalone pods on their port.
+*/ -}}
+{{- $root := . }}
+{{- $d := .Values.modelPools.defaults }}
+{{- $fullname := include "caliban.fullname" . }}
+{{- range $pool := .Values.modelPools.pools }}
+{{- if $pool.enabled }}
+{{- $name := required "modelPools.pools[].name is required" $pool.name }}
+{{- if not (regexMatch "^[a-z]([-a-z0-9]{0,50}[a-z0-9])?$" $name) }}
+{{- fail (printf "modelPools.pools[].name %q must be a DNS-1035 label (lowercase, digits, '-'; max 52 chars)" $name) }}
+{{- end }}
+{{- $svcName := $pool.serviceName | default $name }}
+{{- $img := mergeOverwrite (deepCopy $d.image) ($pool.image | default dict) }}
+{{- $registry := $img.registry }}
+{{- if $root.Values.global.imageRegistry }}{{ $registry = $root.Values.global.imageRegistry }}{{ end }}
+{{- $ref := ternary (printf "@%s" $img.digest) (printf ":%s" (toString $img.tag)) (ne (toString $img.digest) "") }}
+{{- $repo := $img.repository }}
+{{- $parts := splitList "/" $repo }}
+{{- /* With a mirror registry, drop the source registry host (ghcr.io/x/y -> x/y), like airgap/load.sh does. */ -}}
+{{- if and $registry (gt (len $parts) 1) (or (contains "." (first $parts)) (contains ":" (first $parts)) (eq (first $parts) "localhost")) }}
+{{- $repo = join "/" (rest $parts) }}
+{{- end }}
+{{- $image := ternary (printf "%s/%s%s" (trimSuffix "/" (toString $registry)) $repo $ref) (printf "%s%s" $repo $ref) (ne (toString $registry) "") }}
+{{- $command := ternary $pool.command $d.command (hasKey $pool "command") }}
+{{- $port := $pool.port | default $d.port | int }}
+{{- $gpus := ternary $pool.gpus $d.gpus (hasKey $pool "gpus") | int }}
+{{- $gpuRes := $pool.gpuResourceName | default $d.gpuResourceName }}
+{{- $resources := deepCopy ($pool.resources | default $d.resources | default dict) }}
+{{- if gt $gpus 0 }}
+{{- $limits := $resources.limits | default dict }}
+{{- $_ := set $limits $gpuRes $gpus }}
+{{- $_ := set $resources "limits" $limits }}
+{{- end }}
+{{- $w := mergeOverwrite (deepCopy $d.weights) ($pool.weights | default dict) }}
+{{- $claim := $w.existingClaim | default (ternary (printf "%s-models-%s" $fullname $name) "" (and $w.create true)) }}
+{{- $env := concat ($d.env | default list) ($pool.env | default list) }}
+{{- $health := $pool.healthPath | default $d.healthPath }}
+{{- $labels := dict "app.kubernetes.io/component" "model-pool" "caliban.io/pool" $name }}
+{{- if and $w.create (not $w.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $claim }}
+  labels:
+    {{- include "caliban.labels" $root | nindent 4 }}
+    {{- toYaml $labels | nindent 4 }}
+  annotations:
+    # Keep the weights when the release is uninstalled; they are slow to re-copy.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml $w.accessModes | nindent 4 }}
+  {{- with $w.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $w.size | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-pool-{{ $name }}
+  labels:
+    {{- include "caliban.labels" $root | nindent 4 }}
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  replicas: {{ $pool.replicas | default 1 }}
+  revisionHistoryLimit: 3
+  # GPU pools: Recreate avoids needing a spare GPU during a rollout.
+  strategy:
+    type: {{ $pool.strategy | default $d.strategy | default "Recreate" }}
+  selector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" $root | nindent 6 }}
+      {{- toYaml $labels | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "caliban.labels" $root | nindent 8 }}
+        {{- toYaml $labels | nindent 8 }}
+        {{- with ($pool.podLabels | default $d.podLabels) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with ($pool.podAnnotations | default $d.podAnnotations) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "caliban.serviceAccountName" $root }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ $pool.terminationGracePeriodSeconds | default $d.terminationGracePeriodSeconds | default 60 }}
+      {{- with $root.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml ($pool.podSecurityContext | default $d.podSecurityContext) | nindent 8 }}
+      containers:
+        - name: engine
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $img.pullPolicy | default "IfNotPresent" }}
+          {{- with $command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $pool.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $port }}
+              protocol: TCP
+          {{- with $env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          startupProbe:
+            httpGet: { path: {{ $health }}, port: http }
+            {{- toYaml $d.probes.startup | nindent 12 }}
+          readinessProbe:
+            httpGet: { path: {{ $health }}, port: http }
+            {{- toYaml $d.probes.readiness | nindent 12 }}
+          livenessProbe:
+            httpGet: { path: {{ $health }}, port: http }
+            {{- toYaml $d.probes.liveness | nindent 12 }}
+          resources:
+            {{- toYaml $resources | nindent 12 }}
+          securityContext:
+            {{- toYaml ($pool.securityContext | default $d.securityContext) | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: {{ $w.mountPath }}
+              {{- with $w.subPath }}
+              subPath: {{ . }}
+              {{- end }}
+              readOnly: true
+            - name: cache
+              mountPath: /cache
+            - name: tmp
+              mountPath: /tmp
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: models
+          {{- if $claim }}
+          persistentVolumeClaim:
+            claimName: {{ $claim }}
+            readOnly: true
+          {{- else }}
+          {{- fail (printf "modelPools pool %q: set weights.existingClaim (a PVC holding the bundle's models/ dir) or weights.create=true" $name) }}
+          {{- end }}
+        - name: cache
+          emptyDir:
+            sizeLimit: {{ $pool.cacheSize | default $d.cacheSize }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 4Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ $pool.shmSize | default $d.shmSize }}
+      {{- with ($pool.nodeSelector | default $d.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $tol := $pool.tolerations | default $d.tolerations }}
+      {{- if and (gt $gpus 0) $tol }}
+      tolerations:
+        {{- toYaml $tol | nindent 8 }}
+      {{- else if and (eq $gpus 0) $pool.tolerations }}
+      tolerations:
+        {{- toYaml $pool.tolerations | nindent 8 }}
+      {{- end }}
+      {{- with ($pool.affinity | default $d.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}
+  labels:
+    {{- include "caliban.labels" $root | nindent 4 }}
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "caliban.selectorLabels" $root | nindent 4 }}
+    {{- toYaml $labels | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}
+{{- end }}

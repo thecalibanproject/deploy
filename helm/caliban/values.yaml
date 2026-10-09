@@ -1,0 +1,538 @@
+# Default values for the Caliban chart.
+# Posture: zero egress (NetworkPolicy default-deny), non-root, read-only root FS,
+# secrets only via pre-created Secrets (existingSecret pattern).
+
+global:
+  # Private registry / mirror for ALL images of this chart, e.g. "registry.internal:5000".
+  # Wins over image.registry. The repository path is kept (caliban/caliban).
+  imageRegistry: ""
+  imagePullSecrets: []
+  # - name: regcred
+
+nameOverride: ""
+fullnameOverride: ""
+
+# split:      router Deployment (stateless, HPA-ready) + control-plane Deployment.
+# standalone: one Deployment running `caliban standalone` (both ports). Small sites.
+mode: split
+
+image:
+  registry: ""
+  repository: caliban/caliban
+  # Defaults to .Chart.AppVersion.
+  tag: ""
+  # sha256:...  When set, the image is referenced by digest (recommended for air-gap).
+  digest: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # Caliban does not talk to the Kubernetes API.
+  automountServiceAccountToken: false
+
+# ─────────────── Secrets (existingSecret pattern) ───────────────
+# Create them out of band (sealed-secrets, external-secrets, Vault, kubectl):
+#   kubectl create secret generic caliban-auth \
+#     --from-literal=admin-token="$(openssl rand -hex 32)" \
+#     --from-literal=kek="$(openssl rand -base64 32)"
+auth:
+  existingSecret: caliban-auth
+  adminTokenKey: admin-token
+  kekKey: kek
+  # DEV ONLY: let the chart create the Secret from the two values below.
+  # The values end up in the Helm release object; do not use in production.
+  create: false
+  adminToken: ""
+  kek: ""
+
+# BYOK provider keys referenced from config as api_key = { env = "NAME" }.
+# Every key of this Secret becomes an env var of the same name, e.g.
+#   kubectl create secret generic caliban-provider-keys --from-literal=ACME_OPENAI_API_KEY=sk-...
+# Prefer storing keys through the admin console/API (encrypted with the KEK) instead.
+providerKeys:
+  existingSecret: ""
+
+# Postgres DSN, from a Secret key (it carries the password).
+#   kubectl create secret generic caliban-database \
+#     --from-literal=url='postgres://caliban:<pw>@postgres.db.svc:5432/caliban?sslmode=require'
+database:
+  existingSecret: caliban-database
+  urlKey: url
+
+qdrant:
+  url: http://qdrant:6334
+
+valkey:
+  # Used when existingSecret is empty. Put passwords in a Secret instead.
+  url: redis://valkey:6379
+  existingSecret: ""
+  urlKey: url
+
+# tracing filter, e.g. "info,caliban=debug"
+log: info
+
+# Telemetry is OFF unless an endpoint is set. Point it at YOUR collector only.
+otel:
+  endpoint: ""
+
+extraEnv: []
+# - name: FOO
+#   value: bar
+extraEnvFrom: []
+extraVolumes: []
+extraVolumeMounts: []
+
+# ─────────────── caliban.toml ───────────────
+# Rendered to TOML verbatim (maps -> [tables], lists of maps -> [[arrays of tables]],
+# { env = "X" } / { file = "X" } -> inline secret references). Same schema as
+# core/config/caliban.example.toml. Never put secrets here.
+config:
+  server:
+    router_addr: "0.0.0.0:8080"
+    control_plane_addr: "0.0.0.0:8081"
+    web_dir: /usr/share/caliban/web
+  security:
+    egress: deny_by_default
+    admin_token:
+      env: CALIBAN_ADMIN_TOKEN
+  cache:
+    exact_enabled: true
+    exact_max_entries: 100000
+    exact_ttl_secs: 3600
+  pii:
+    default_mode: reversible
+  # Deployment-wide model servers shared by all tenants (on-prem pools). Hostnames are the
+  # Service names of modelPools.pools below (same namespace), or your own engine's Service.
+  # cache_salt = true only for vLLM / SGLang (per-tenant prefix-cache isolation).
+  # Catalogue background: core/config/open-models.example.toml, docs/research/09-open-models-on-prem.md.
+  providers:
+    - id: vllm-qwen3-small
+      kind: openai_compatible
+      base_url: http://qwen3-small:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: true
+    - id: vllm-qwen3-large
+      kind: openai_compatible
+      base_url: http://qwen3-large:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: true
+    - id: tei-embed
+      kind: openai_compatible
+      base_url: http://embed:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: false
+    - id: vllm-rerank
+      kind: openai_compatible
+      base_url: http://rerank:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: true
+  models:
+    - id: local/qwen3.5-9b
+      provider: vllm-qwen3-small
+      upstream_model: Qwen/Qwen3.5-9B
+      kind: chat
+      family: qwen3.5
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 131072
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+      capabilities:
+        tools: true
+        vision: false
+        reasoning: hybrid
+        reasoning_control: enable_thinking
+        inline_think_tags: false
+    - id: local/qwen3.8-27b
+      provider: vllm-qwen3-large
+      upstream_model: Qwen/Qwen3.8-27B-FP8
+      kind: chat
+      family: qwen3.8
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 131072
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+      capabilities:
+        tools: true
+        vision: true
+        reasoning: hybrid
+        reasoning_control: enable_thinking
+        inline_think_tags: false
+    - id: local/qwen3-embedding-0.6b
+      provider: tei-embed
+      upstream_model: Qwen/Qwen3-Embedding-0.6B
+      kind: embedding
+      family: qwen3-embedding
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 32768
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+    - id: local/qwen3-reranker-0.6b
+      provider: vllm-rerank
+      upstream_model: Qwen/Qwen3-Reranker-0.6B
+      kind: rerank
+      family: qwen3-reranker
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 8192
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+  tenants:
+    - id: default
+      name: Default tenant
+      pii_mode: reversible
+      # SHA-256 hex hashes from `caliban keygen`.
+      api_key_hashes: []
+      # Tenant-scoped BYOK providers (also add the provider to networkPolicy.egress.providers):
+      # providers:
+      #   - id: openai
+      #     kind: openai
+      #     base_url: https://api.openai.com/v1
+      #     trust_tier: t2_contracted
+      #     api_key:
+      #       env: ACME_OPENAI_API_KEY
+      routes:
+        - intent: default
+          models: [local/qwen3.8-27b, local/qwen3.5-9b]
+        - intent: chat
+          models: [local/qwen3.5-9b, local/qwen3.8-27b]
+        - intent: code
+          models: [local/qwen3.8-27b, local/qwen3.5-9b]
+
+# ─────────────── Workloads ───────────────
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  privileged: false
+  capabilities:
+    drop: [ALL]
+
+probes:
+  startup:   { periodSeconds: 2,  timeoutSeconds: 2, failureThreshold: 60 }
+  liveness:  { periodSeconds: 10, timeoutSeconds: 2, failureThreshold: 3 }
+  readiness: { periodSeconds: 5,  timeoutSeconds: 2, failureThreshold: 2 }
+
+router:
+  replicas: 2
+  args: [router]
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits:   { memory: 1Gi }
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: ""
+  pdb:
+    enabled: true
+    minAvailable: 1
+  service:
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  terminationGracePeriodSeconds: 60
+
+controlPlane:
+  replicas: 1
+  args: [control-plane]
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits:   { memory: 512Mi }
+  service:
+    type: ClusterIP
+    port: 8081
+    annotations: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  terminationGracePeriodSeconds: 30
+
+# Used when mode=standalone. Services for router and control plane both point at it.
+standalone:
+  replicas: 1
+  args: [standalone]
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits:   { memory: 1536Mi }
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  terminationGracePeriodSeconds: 60
+
+# ─────────────── Model pools (in-cluster inference engines, optional) ───────────────
+# One Deployment + Service per ENABLED pool: any OpenAI-compatible engine image (vLLM, SGLang,
+# TEI, llama.cpp) serving one model from a read-only weights PVC. The Service is named after
+# the pool (no release prefix), matching config.providers[].base_url above.
+# Security: pods run non-root under the namespace's restricted PSS, get NO egress at all
+# (default-deny NetworkPolicy) and accept traffic only from the Caliban data plane.
+# Weights: a PVC laid out like compose's $MODELS_DIR (copy the bundle's models/ dir into it,
+# see airgap/README.md). Pools on several nodes need a ReadOnlyMany/ReadWriteMany volume.
+# Sizing per hardware tier: docs/research/09-open-models-on-prem.md §4.
+modelPools:
+  defaults:
+    image:
+      registry: ""          # global.imageRegistry wins when set
+      repository: vllm/vllm-openai
+      tag: v0.30.0
+      digest: ""
+      pullPolicy: IfNotPresent
+    command: [vllm, serve]  # set `command: []` on a pool to use the image entrypoint (TEI, llama.cpp)
+    port: 8000
+    gpus: 1                 # GPU count per pod (0 = CPU pool)
+    gpuResourceName: nvidia.com/gpu
+    resources:
+      requests: { cpu: "4", memory: 32Gi }
+      limits: { memory: 64Gi }
+    shmSize: 16Gi           # /dev/shm (NCCL / tensor parallel)
+    cacheSize: 20Gi         # /cache emptyDir: HF, vLLM, Triton, torch.compile caches
+    strategy: Recreate
+    terminationGracePeriodSeconds: 60
+    healthPath: /health     # vLLM, SGLang, TEI and llama.cpp all expose /health
+    weights:
+      existingClaim: ""     # PVC with the models/ tree; shared by all pools
+      create: false         # or let the chart create one PVC per pool (fill it yourself)
+      size: 100Gi
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      mountPath: /models
+      subPath: ""
+    env:
+      - { name: HF_HUB_OFFLINE, value: "1" }
+      - { name: TRANSFORMERS_OFFLINE, value: "1" }
+      - { name: HF_HUB_DISABLE_TELEMETRY, value: "1" }
+      - { name: VLLM_NO_USAGE_STATS, value: "1" }
+      - { name: VLLM_DO_NOT_TRACK, value: "1" }
+      - { name: DO_NOT_TRACK, value: "1" }
+      - { name: HOME, value: /cache }
+      - { name: HF_HOME, value: /cache/hf }
+      - { name: VLLM_CACHE_ROOT, value: /cache/vllm }
+      - { name: TRITON_CACHE_DIR, value: /cache/triton }
+      - { name: XDG_CACHE_HOME, value: /cache/xdg }
+    nodeSelector: {}
+    # Applied to GPU pools only.
+    tolerations:
+      - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+    affinity: {}
+    podAnnotations: {}
+    podLabels: {}
+    # Non-root, restricted-PSS compatible. If an engine image insists on root, run that pool
+    # in a separate namespace/chart with a baseline PSS instead of weakening this one.
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile: { type: RuntimeDefault }
+    securityContext:
+      allowPrivilegeEscalation: false
+      privileged: false
+      capabilities: { drop: [ALL] }
+    probes:
+      # Model load can take many minutes (up to 30 here) on first start.
+      startup:   { periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 180 }
+      readiness: { periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 3 }
+      liveness:  { periodSeconds: 20, timeoutSeconds: 5, failureThreshold: 6 }
+
+  # Per-pool fields: name (required; = Service name), enabled, serviceName, image{}, command,
+  # args, port, gpus, gpuResourceName, resources, env (appended to defaults), weights{},
+  # replicas, nodeSelector, tolerations, affinity, shmSize, cacheSize, healthPath,
+  # podSecurityContext, securityContext, podAnnotations, podLabels.
+  pools:
+    # 1×24 GB: Qwen3.5-9B (Apache-2.0), online FP8, text-only, 128k context.
+    - name: qwen3-small
+      enabled: false
+      args:
+        - /models/qwen3.5-9b
+        - --served-model-name=Qwen/Qwen3.5-9B
+        - --host=0.0.0.0
+        - --port=8000
+        - --language-model-only
+        - --quantization=fp8_per_tensor
+        - --max-model-len=131072
+        - --gpu-memory-utilization=0.80
+        - --reasoning-parser=qwen3
+        - --enable-auto-tool-choice
+        - --tool-call-parser=qwen3_coder
+    # 1×48 GB (131072 ctx, fp8 KV) or 1×80 GB (raise to 262144): Qwen3.8-27B-FP8 (Apache-2.0).
+    - name: qwen3-large
+      enabled: false
+      args:
+        - /models/qwen3.8-27b-fp8
+        - --served-model-name=Qwen/Qwen3.8-27B-FP8
+        - --host=0.0.0.0
+        - --port=8000
+        - --max-model-len=131072
+        - --kv-cache-dtype=fp8
+        - --gpu-memory-utilization=0.85
+        - --reasoning-parser=qwen3
+        - --enable-auto-tool-choice
+        - --tool-call-parser=qwen3_coder
+    # Throughput tier: Qwen3.6-35B-A3B-FP8 (MoE, 3B active; Apache-2.0).
+    - name: qwen3-moe
+      enabled: false
+      args:
+        - /models/qwen3.6-35b-a3b-fp8
+        - --served-model-name=Qwen/Qwen3.6-35B-A3B-FP8
+        - --host=0.0.0.0
+        - --port=8000
+        - --max-model-len=131072
+        - --kv-cache-dtype=fp8
+        - --gpu-memory-utilization=0.90
+        - --reasoning-parser=qwen3
+        - --enable-auto-tool-choice
+        - --tool-call-parser=qwen3_coder
+    # 2×80 GB example with SGLang: Qwen3.5-122B-A10B-FP8, TP2, prefix-heavy agent/RAG traffic.
+    - name: qwen3-xl
+      enabled: false
+      image: { repository: lmsysorg/sglang, tag: v0.5.21 }
+      command: [python3, -m, sglang.launch_server]
+      gpus: 2
+      resources:
+        requests: { cpu: "8", memory: 64Gi }
+        limits: { memory: 128Gi }
+      shmSize: 32Gi
+      args:
+        - --model-path=/models/qwen3.5-122b-a10b-fp8
+        - --served-model-name=Qwen/Qwen3.5-122B-A10B-FP8
+        - --host=0.0.0.0
+        - --port=8000
+        - --tp-size=2
+        - --context-length=131072
+        - --reasoning-parser=qwen3
+        - --tool-call-parser=qwen3_coder
+    # gpt-oss-20b (Apache-2.0). Needs the tiktoken encodings next to the weights.
+    - name: gpt-oss
+      enabled: false
+      env:
+        - { name: TIKTOKEN_ENCODINGS_BASE, value: /models/tiktoken }
+      args:
+        - /models/gpt-oss-20b
+        - --served-model-name=openai/gpt-oss-20b
+        - --host=0.0.0.0
+        - --port=8000
+        - --max-model-len=131072
+        - --enable-auto-tool-choice
+        - --tool-call-parser=openai
+    # Embeddings: Qwen3-Embedding-0.6B on TEI (GPU image; pick the tag for your GPU arch).
+    - name: embed
+      enabled: false
+      image: { repository: ghcr.io/huggingface/text-embeddings-inference, tag: cuda-1.9.4 }
+      command: []
+      resources:
+        requests: { cpu: "2", memory: 4Gi }
+        limits: { memory: 8Gi }
+      shmSize: 1Gi
+      cacheSize: 2Gi
+      args:
+        - --model-id=/models/qwen3-embedding-0.6b
+        - --served-model-name=Qwen/Qwen3-Embedding-0.6B
+        - --hostname=0.0.0.0
+        - --port=8000
+        - --auto-truncate
+    # Reranker: Qwen3-Reranker-0.6B on vLLM's pooling runner (TEI cannot serve it).
+    - name: rerank
+      enabled: false
+      resources:
+        requests: { cpu: "2", memory: 8Gi }
+        limits: { memory: 16Gi }
+      shmSize: 2Gi
+      args:
+        - /models/qwen3-reranker-0.6b
+        - --served-model-name=Qwen/Qwen3-Reranker-0.6B
+        - --host=0.0.0.0
+        - --port=8000
+        - --runner=pooling
+        - '--hf-overrides={"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}'
+        - --max-model-len=8192
+        - --gpu-memory-utilization=0.85
+    # CPU-only chat: llama.cpp with the Qwen3.6-35B-A3B Q4_K_M GGUF (~26 GB RAM incl. KV).
+    - name: qwen3-cpu
+      enabled: false
+      image: { repository: ghcr.io/ggml-org/llama.cpp, tag: server-b11347 }
+      command: []
+      gpus: 0
+      resources:
+        requests: { cpu: "16", memory: 32Gi }
+        limits: { memory: 40Gi }
+      shmSize: 1Gi
+      args:
+        - --model=/models/qwen3.6-35b-a3b-gguf/Qwen3.6-35B-A3B-Q4_K_M.gguf
+        - --alias=ggml-org/Qwen3.6-35B-A3B-GGUF
+        - --host=0.0.0.0
+        - --port=8000
+        - --ctx-size=32768
+        - --threads=16
+        - --parallel=2
+        - --jinja
+        - --no-webui
+        - --offline
+
+# ─────────────── Network policy: default-deny, explicit allow-list ───────────────
+networkPolicy:
+  enabled: true
+  ingress:
+    # Peers allowed to reach the router (8080) / control plane (8081).
+    # Empty list = any source (needed for most ingress controllers). Restrict in production.
+    router: []
+    controlPlane: []
+    # - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    # Extra peers allowed to call the model pools directly (the Caliban data plane always is).
+    # Keep empty: clients should go through Caliban (PII, routing, cache salt, metering).
+    modelPools: []
+  egress:
+    dns:
+      enabled: true
+      namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      podSelector: { matchLabels: { k8s-app: kube-dns } }
+    # Datastores. Default: pods in the release namespace on their standard ports.
+    datastores:
+      - to: [{ podSelector: {} }]
+        ports:
+          - { port: 5432, protocol: TCP }   # postgres
+          - { port: 6333, protocol: TCP }   # qdrant http
+          - { port: 6334, protocol: TCP }   # qdrant grpc
+          - { port: 6379, protocol: TCP }   # valkey
+    # Self-hosted model servers OUTSIDE this release (vLLM / SGLang / llm-d gateway in an `llm`
+    # namespace). In-release modelPools are allowed automatically.
+    localModels:
+      - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: llm } } }]
+        ports:
+          - { port: 8000, protocol: TCP }
+    # BYOK provider allow-list. Empty = no internet egress at all (air-gapped default).
+    # `cidrs` render into the standard NetworkPolicy (ipBlock). `hosts` need an FQDN-aware
+    # CNI: set networkPolicy.cilium.enabled=true to render a CiliumNetworkPolicy.
+    providers: []
+    # - name: openai
+    #   cidrs: ["162.159.140.245/32"]     # example only; get current ranges from the provider
+    #   hosts: ["api.openai.com"]
+    #   ports: [443]
+    # Raw extra egress rules (NetworkPolicyEgressRule objects), e.g. an OTLP collector.
+    extra: []
+  cilium:
+    enabled: false

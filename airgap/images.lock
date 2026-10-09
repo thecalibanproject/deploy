@@ -1,0 +1,18 @@
+# Pinned images for the offline bundle.  Columns: <groups> <compose env var> <image ref>
+#   groups: `core` (always bundled) or a comma-separated list of compose profiles that use the
+#           image (qwen3-small, qwen3-large, qwen3-moe, gpt-oss, embeddings, reranker, cpu,
+#           ollama). bundle.sh --profile selects which ones are saved.
+#   @VERSION@ is replaced with bundle.sh --version.
+# Keep in sync with the defaults in compose/docker-compose.yml and helm values (modelPools).
+# Pin by digest (ref@sha256:...) once validated; bundle.sh records digests in images.txt.
+# Tags checked on 2026-10-02: vLLM v0.30.0 (2026-09-22), TEI 1.9.4 (2026-09-15),
+# llama.cpp server-b11347, Ollama 0.35.0 (2026-09-28).
+core  CALIBAN_IMAGE   caliban/caliban:@VERSION@
+core  POSTGRES_IMAGE  postgres:17.11-bookworm
+core  QDRANT_IMAGE    qdrant/qdrant:v1.19.1-unprivileged
+core  VALKEY_IMAGE    valkey/valkey:9.1.2
+qwen3-small,qwen3-large,qwen3-moe,gpt-oss,reranker  VLLM_IMAGE  vllm/vllm-openai:v0.30.0
+embeddings  TEI_IMAGE      ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.4
+cpu         TEI_CPU_IMAGE  ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4
+cpu         LLAMACPP_IMAGE ghcr.io/ggml-org/llama.cpp:server-b11347
+ollama      OLLAMA_IMAGE   ollama/ollama:0.35.0

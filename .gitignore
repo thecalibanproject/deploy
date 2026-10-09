@@ -1,0 +1,24 @@
+# local secrets
+compose/.env
+*.env.local
+images.env
+
+# model weights and bundles
+compose/models/
+models/
+dist/
+caliban-bundle-*.tar
+caliban-bundle-*.tar.sha256
+
+# signing keys (public keys are distributed out of band, private keys never live here)
+*.key
+cosign.pub
+*.minisig
+
+# helm
+helm/caliban/charts/*.tgz
+*.tgz
+
+.DS_Store
+.idea/
+.vscode/

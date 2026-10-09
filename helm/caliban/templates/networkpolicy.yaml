@@ -1,0 +1,180 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $fullname := include "caliban.fullname" . }}
+{{- $poolPorts := list }}
+{{- range .Values.modelPools.pools }}{{- if .enabled }}{{- $poolPorts = append $poolPorts (int (.port | default $.Values.modelPools.defaults.port)) }}{{- end }}{{- end }}
+{{- $poolPorts = uniq $poolPorts }}
+# 1) Default deny: every Caliban pod (including model pools), all ingress and all egress.
+#    Model pools get no egress rule at all below: inference engines never reach the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-default-deny
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+---
+# 2) Ingress to the data plane (8080).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-ingress-router
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [router, standalone]
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: http, protocol: TCP }
+      {{- with $np.ingress.router }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+# 3) Ingress to the control plane (8081): configured peers + other Caliban pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-ingress-control-plane
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [control-plane, standalone]
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - { port: admin, protocol: TCP }
+      {{- with $np.ingress.controlPlane }}
+      from:
+        {{- toYaml . | nindent 8 }}
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" $ | nindent 14 }}
+      {{- end }}
+---
+# 4) Egress allow-list for router / control plane / standalone (not model pools).
+#    Anything not listed here is dropped (zero egress by default).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-egress
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: NotIn
+        values: [model-pool]
+  policyTypes: [Egress]
+  egress:
+    {{- if $np.egress.dns.enabled }}
+    # Cluster DNS only (no external resolvers).
+    - to:
+        - namespaceSelector:
+            {{- toYaml $np.egress.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.egress.dns.podSelector | nindent 12 }}
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    {{- end }}
+    # Caliban pods talking to each other (router -> control plane).
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" . | nindent 14 }}
+      ports:
+        - { port: 8080, protocol: TCP }
+        - { port: 8081, protocol: TCP }
+    {{- range $np.egress.datastores }}
+    - to:
+        {{- toYaml .to | nindent 8 }}
+      ports:
+        {{- toYaml .ports | nindent 8 }}
+    {{- end }}
+    {{- range $np.egress.localModels }}
+    - to:
+        {{- toYaml .to | nindent 8 }}
+      ports:
+        {{- toYaml .ports | nindent 8 }}
+    {{- end }}
+    {{- if $poolPorts }}
+    # In-release model pools (modelPools.pools).
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: model-pool
+      ports:
+        {{- range $poolPorts }}
+        - { port: {{ . }}, protocol: TCP }
+        {{- end }}
+    {{- end }}
+    {{- range $np.egress.providers }}
+    {{- if .cidrs }}
+    # BYOK provider: {{ .name }}
+    - to:
+        {{- range .cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        {{- range (.ports | default (list 443)) }}
+        - { port: {{ . }}, protocol: TCP }
+        {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- with $np.egress.extra }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- if $poolPorts }}
+---
+# 5) Ingress to model pools: only from the Caliban data plane (router / standalone).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-ingress-model-pools
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: model-pool
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" . | nindent 14 }}
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [router, standalone]
+        {{- with $np.ingress.modelPools }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - { port: http, protocol: TCP }
+{{- end }}
+{{- end }}

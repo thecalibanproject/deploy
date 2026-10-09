@@ -1,0 +1,485 @@
+# Caliban — single-host on-prem stack (zero egress by default).
+#
+#   cp .env.example .env            # then fill in the secrets (see comments in the file)
+#   docker compose --profile qwen3-small --profile embeddings --profile reranker up -d   # 1×24 GB GPU
+#   docker compose --profile qwen3-large --profile embeddings --profile reranker up -d   # 1×48/80 GB GPU
+#   docker compose --profile cpu up -d       # no GPU: llama.cpp + TEI (CPU)
+#   docker compose --profile ollama up -d    # one Ollama endpoint, many models
+#   docker compose up -d                     # no local model (BYOK only; needs the egress override)
+# Every model profile is listed in README.md "Running open models".
+#
+# Network layout
+#   backend  internal: true   -> no route off the host at all. postgres, qdrant, valkey and
+#                                every model server.
+#   edge     masquerade off   -> only exists so caliban's ports can be published on the host.
+#                                No NAT means containers on it cannot reach the internet.
+#   Only caliban is attached to edge, so 8080/8081 are the only published ports.
+#   To let caliban call BYOK providers, add docker-compose.byok-egress.yml (see README).
+#
+# Images are pinned and overridable (*_IMAGE) so they can point at a private mirror;
+# keep the defaults in sync with airgap/images.lock.
+
+name: caliban
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+  logging:
+    driver: local
+    options:
+      max-size: 20m
+      max-file: "5"
+
+x-llm-offline-env: &llm-offline-env
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  HF_DATASETS_OFFLINE: "1"
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  VLLM_NO_USAGE_STATS: "1"
+  VLLM_DO_NOT_TRACK: "1"
+  DO_NOT_TRACK: "1"
+
+
+# vLLM pools (OpenAI-compatible server). Per-pool command/volumes/devices are set below.
+x-vllm: &vllm
+  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+  entrypoint: ["vllm", "serve"]
+  environment:
+    <<: *llm-offline-env
+    HF_HOME: /cache/hf
+    VLLM_CACHE_ROOT: /cache/vllm
+    HOME: /cache
+  ipc: host
+  networks: [backend]
+  healthcheck:
+    test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
+    interval: 15s
+    timeout: 5s
+    retries: 60
+    start_period: 180s
+
+# Text Embeddings Inference (embeddings + XLM-R/GTE/ModernBERT rerankers), GPU or CPU image.
+x-tei: &tei
+  environment:
+    <<: *llm-offline-env
+    HF_HOME: /tmp/hf
+  tmpfs:
+    - /tmp
+  volumes:
+    - ${MODELS_DIR:-./models}:/models:ro
+  networks: [backend]
+  healthcheck:
+    test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/8000' || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 60s
+
+services:
+  caliban:
+    <<: *hardening
+    image: ${CALIBAN_IMAGE:-caliban/caliban}:${CALIBAN_VERSION:-0.1.0}
+    command: ["standalone"]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      CALIBAN_CONFIG: /etc/caliban/caliban.toml
+      CALIBAN_WEB_DIR: /usr/share/caliban/web
+      CALIBAN_LOG: ${CALIBAN_LOG:-info}
+      CALIBAN_ADMIN_TOKEN: ${CALIBAN_ADMIN_TOKEN:?set CALIBAN_ADMIN_TOKEN in .env}
+      CALIBAN_KEK: ${CALIBAN_KEK:?set CALIBAN_KEK in .env (base64, 32 bytes)}
+      CALIBAN_DATABASE_URL: postgres://caliban:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caliban
+      CALIBAN_QDRANT_URL: http://qdrant:6334
+      CALIBAN_VALKEY_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env}@valkey:6379/0
+      # BYOK keys referenced from caliban.toml via { env = "..." }. Empty = unused.
+      ACME_OPENAI_API_KEY: ${ACME_OPENAI_API_KEY:-}
+      # L1 PII NER model (names, organisations, places). Point at a verified artifact inside the
+      # mounted /models/pii (e.g. /models/pii/nym-pii-multilingual-small-int8/3.0.0); empty = off.
+      CALIBAN_PII_NER_DIR: ${CALIBAN_PII_NER_DIR:-}
+      CALIBAN_PII_NER_SESSIONS: ${CALIBAN_PII_NER_SESSIONS:-2}
+      # Telemetry stays off unless you point this at your own collector.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    volumes:
+      - ./config/caliban.toml:/etc/caliban/caliban.toml:ro
+      - ${CALIBAN_PII_MODEL_DIR:-./models/pii}:/models/pii:ro
+    ports:
+      - "${CALIBAN_BIND:-127.0.0.1}:${CALIBAN_ROUTER_PORT:-8080}:8080"
+      - "${CALIBAN_BIND:-127.0.0.1}:${CALIBAN_CP_PORT:-8081}:8081"
+    networks:
+      - backend
+      - edge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    # The image is distroless (no shell/curl), so there is no in-container healthcheck.
+    # Use scripts/smoke.sh from the host. TODO: switch to `caliban healthcheck` once core ships it.
+
+  postgres:
+    <<: *hardening
+    image: ${POSTGRES_IMAGE:-postgres:17.11-bookworm}
+    environment:
+      POSTGRES_USER: caliban
+      POSTGRES_DB: caliban
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --data-checksums --auth-host=scram-sha-256
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    shm_size: 256m
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caliban -d caliban -h 127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  qdrant:
+    <<: *hardening
+    # "-unprivileged" variant runs as uid 1000.
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.1-unprivileged}
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+      QDRANT__LOG_LEVEL: INFO
+    volumes:
+      - qdrant-data:/qdrant/storage
+      - qdrant-snapshots:/qdrant/snapshots
+    networks: [backend]
+    healthcheck:
+      # No curl in the image; bash's /dev/tcp is enough to know the HTTP port is up.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  valkey:
+    <<: *hardening
+    image: ${VALKEY_IMAGE:-valkey/valkey:9.1.2}
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env}
+    # Password passed via env (not argv) so it doesn't show up in `docker inspect` Cmd.
+    command:
+      - sh
+      - -c
+      - exec valkey-server --appendonly yes --save 60 1000 --protected-mode yes --requirepass "$$VALKEY_PASSWORD"
+    volumes:
+      - valkey-data:/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli --no-auth-warning -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ═══════════════════════ Local model servers ═══════════════════════
+  # One engine container per model ("pool"), each behind its own profile. Service names are
+  # the DNS names used as base_url in config/caliban.toml. Combine profiles to match your
+  # hardware tier (README "Running open models"), e.g.
+  #   1×24 GB:  --profile qwen3-small --profile embeddings --profile reranker
+  #   1×48 GB:  --profile qwen3-large --profile embeddings --profile reranker
+  #   CPU only: --profile cpu
+  #   anything: --profile ollama           (one endpoint, many models)
+  # Do not combine `embeddings` with `cpu`: both serve the `embed` name.
+  #
+  # Weights are never downloaded at runtime: everything is read from $MODELS_DIR (layout and
+  # download commands in airgap/models.lock.yaml / `airgap/bundle.sh fetch`), HF_HUB_OFFLINE=1,
+  # and the backend network has no route out anyway.
+  # GPU pinning: *_GPU picks the device for each pool. Several pools may share a GPU as long as
+  # their *_GPU_UTIL fractions (vLLM) plus TEI's ~1.5 GB fit on the card. For tensor parallel,
+  # list several ids in device_ids and raise --tensor-parallel-size.
+
+  # ───────────── qwen3-small: Qwen3.5-9B on vLLM (1×24 GB) ─────────────
+  # Apache-2.0. Weights: $MODELS_DIR/qwen3.5-9b (hf download Qwen/Qwen3.5-9B).
+  # Online FP8 (fp8_per_tensor) brings the weights to ~11 GB; W8A8 on Ada/Hopper/Blackwell.
+  # On Ampere (RTX 3090, A10) check it starts, or set QWEN3_SMALL_QUANTIZATION to a
+  # pre-quantized checkpoint's method. --language-model-only skips the vision encoder.
+  qwen3-small:
+    <<: [*hardening, *vllm]
+    profiles: [qwen3-small]
+    command:
+      - /models/qwen3.5-9b
+      - --served-model-name=Qwen/Qwen3.5-9B
+      - --host=0.0.0.0
+      - --port=8000
+      - --language-model-only
+      - --quantization=${QWEN3_SMALL_QUANTIZATION:-fp8_per_tensor}
+      - --max-model-len=${QWEN3_SMALL_MAX_MODEL_LEN:-131072}
+      - --gpu-memory-utilization=${QWEN3_SMALL_GPU_UTIL:-0.70}
+      - --kv-cache-dtype=${QWEN3_SMALL_KV_CACHE_DTYPE:-auto}
+      - --enable-prefix-caching
+      - --reasoning-parser=qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser=qwen3_coder
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+      - vllm-cache-qwen3-small:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${QWEN3_SMALL_GPU:-0}"]
+              capabilities: [gpu]
+
+  # ───────────── qwen3-large: Qwen3.8-27B-FP8 on vLLM (1×48 GB / 1×80 GB) ─────────────
+  # Apache-2.0. Weights: $MODELS_DIR/qwen3.8-27b-fp8 (30.9 GB). FP8 KV keeps 131072 tokens
+  # in budget on a 48 GB card; on 80 GB raise QWEN3_LARGE_MAX_MODEL_LEN to 262144.
+  # Native vision is kept on (images/videos in chat), so the catalogue says vision = true.
+  qwen3-large:
+    <<: [*hardening, *vllm]
+    profiles: [qwen3-large]
+    command:
+      - /models/qwen3.8-27b-fp8
+      - --served-model-name=Qwen/Qwen3.8-27B-FP8
+      - --host=0.0.0.0
+      - --port=8000
+      - --tensor-parallel-size=${QWEN3_LARGE_TP:-1}
+      - --max-model-len=${QWEN3_LARGE_MAX_MODEL_LEN:-131072}
+      - --gpu-memory-utilization=${QWEN3_LARGE_GPU_UTIL:-0.80}
+      - --kv-cache-dtype=${QWEN3_LARGE_KV_CACHE_DTYPE:-fp8}
+      - --enable-prefix-caching
+      - --reasoning-parser=qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser=qwen3_coder
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+      - vllm-cache-qwen3-large:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${QWEN3_LARGE_GPU:-0}"]
+              capabilities: [gpu]
+
+  # ───────────── qwen3-moe: Qwen3.6-35B-A3B-FP8 on vLLM (throughput; 1×48/80 GB) ─────────────
+  # Apache-2.0. MoE, 3B active: the fastest decoder per GPU. Weights 37.5 GB, so on a 48 GB
+  # card run the embedder/reranker elsewhere (cpu profile or another GPU).
+  qwen3-moe:
+    <<: [*hardening, *vllm]
+    profiles: [qwen3-moe]
+    command:
+      - /models/qwen3.6-35b-a3b-fp8
+      - --served-model-name=Qwen/Qwen3.6-35B-A3B-FP8
+      - --host=0.0.0.0
+      - --port=8000
+      - --tensor-parallel-size=${QWEN3_MOE_TP:-1}
+      - --max-model-len=${QWEN3_MOE_MAX_MODEL_LEN:-131072}
+      - --gpu-memory-utilization=${QWEN3_MOE_GPU_UTIL:-0.85}
+      - --kv-cache-dtype=${QWEN3_MOE_KV_CACHE_DTYPE:-fp8}
+      - --enable-prefix-caching
+      - --reasoning-parser=qwen3
+      - --enable-auto-tool-choice
+      - --tool-call-parser=qwen3_coder
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+      - vllm-cache-qwen3-moe:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${QWEN3_MOE_GPU:-0}"]
+              capabilities: [gpu]
+
+  # ───────────── gpt-oss: gpt-oss-20b on vLLM (16 GB+) ─────────────
+  # Apache-2.0. Weights: $MODELS_DIR/gpt-oss-20b and $MODELS_DIR/tiktoken (o200k_base,
+  # cl100k_base: the harmony tokenizer would otherwise download them at start = egress).
+  gpt-oss:
+    <<: [*hardening, *vllm]
+    profiles: [gpt-oss]
+    command:
+      - /models/gpt-oss-20b
+      - --served-model-name=openai/gpt-oss-20b
+      - --host=0.0.0.0
+      - --port=8000
+      - --gpu-memory-utilization=${GPT_OSS_GPU_UTIL:-0.85}
+      - --max-model-len=${GPT_OSS_MAX_MODEL_LEN:-131072}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=openai
+    environment:
+      <<: *llm-offline-env
+      HF_HOME: /cache/hf
+      VLLM_CACHE_ROOT: /cache/vllm
+      HOME: /cache
+      TIKTOKEN_ENCODINGS_BASE: /models/tiktoken
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+      - vllm-cache-gpt-oss:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPT_OSS_GPU:-0}"]
+              capabilities: [gpu]
+
+  # ───────────── embeddings: Qwen3-Embedding-0.6B on TEI (GPU) ─────────────
+  # Apache-2.0, 1024-d, 32k tokens. Weights: $MODELS_DIR/qwen3-embedding-0.6b.
+  # OpenAI-compatible POST /v1/embeddings. TEI allocates memory on demand (~1.5 GB here).
+  # TEI_IMAGE: pick the tag for your GPU arch (cuda-1.9.4 = multi-arch CUDA build;
+  # 89-1.9.4 Ada, hopper-1.9.4 H100, 86-1.9.4 A10/A40).
+  embed:
+    <<: [*hardening, *tei]
+    profiles: [embeddings]
+    image: ${TEI_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.4}
+    command:
+      - --model-id=/models/qwen3-embedding-0.6b
+      - --served-model-name=Qwen/Qwen3-Embedding-0.6B
+      - --hostname=0.0.0.0
+      - --port=8000
+      - --auto-truncate
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${EMBED_GPU:-0}"]
+              capabilities: [gpu]
+
+  # ───────────── reranker: Qwen3-Reranker-0.6B on vLLM (pooling runner) ─────────────
+  # Apache-2.0. Weights: $MODELS_DIR/qwen3-reranker-0.6b. TEI cannot serve Qwen3-Reranker;
+  # vLLM needs the override below (vLLM docs, "Scoring Usages"). POST /v1/rerank.
+  rerank:
+    <<: [*hardening, *vllm]
+    profiles: [reranker]
+    command:
+      - /models/qwen3-reranker-0.6b
+      - --served-model-name=Qwen/Qwen3-Reranker-0.6B
+      - --host=0.0.0.0
+      - --port=8000
+      - --runner=pooling
+      - '--hf-overrides={"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}'
+      - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${RERANK_GPU_UTIL:-0.10}
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+      - vllm-cache-rerank:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${RERANK_GPU:-0}"]
+              capabilities: [gpu]
+
+  # ───────────── cpu: llama.cpp chat + TEI embeddings + TEI reranker, no GPU ─────────────
+  # Chat: Qwen3.6-35B-A3B Q4_K_M GGUF (20.4 GB, 3B active parameters, so CPU decode is usable).
+  # Plan >= 32 GB RAM (64 GB comfortable) and 16+ physical cores. Benchmark before promising SLOs.
+  # Swap in another GGUF with QWEN3_CPU_GGUF (path under $MODELS_DIR) + QWEN3_CPU_ALIAS, and add
+  # a matching [[models]] entry (e.g. unsloth/Qwen3.5-9B-GGUF from airgap/models.lock.yaml).
+  qwen3-cpu:
+    <<: *hardening
+    profiles: [cpu]
+    image: ${LLAMACPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b11347}
+    command:
+      - --model=/models/${QWEN3_CPU_GGUF:-qwen3.6-35b-a3b-gguf/Qwen3.6-35B-A3B-Q4_K_M.gguf}
+      - --alias=${QWEN3_CPU_ALIAS:-ggml-org/Qwen3.6-35B-A3B-GGUF}
+      - --host=0.0.0.0
+      - --port=8000
+      - --ctx-size=${LLM_CTX:-32768}
+      - --threads=${LLM_THREADS:-8}
+      - --parallel=${LLM_PARALLEL:-2}
+      - --jinja
+      - --no-webui
+      - --offline
+    environment:
+      <<: *llm-offline-env
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+
+  embed-cpu:
+    <<: [*hardening, *tei]
+    profiles: [cpu]
+    image: ${TEI_CPU_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4}
+    command:
+      - --model-id=/models/qwen3-embedding-0.6b
+      - --served-model-name=Qwen/Qwen3-Embedding-0.6B
+      - --hostname=0.0.0.0
+      - --port=8000
+      - --auto-truncate
+    networks:
+      backend:
+        aliases: [embed]
+
+  # bge-reranker-v2-m3 (Apache-2.0, XLM-RoBERTa cross-encoder): TEI serves it on CPU.
+  # POST /rerank (no /v1 prefix on TEI).
+  rerank-bge:
+    <<: [*hardening, *tei]
+    profiles: [cpu]
+    image: ${TEI_CPU_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.4}
+    command:
+      - --model-id=/models/bge-reranker-v2-m3
+      - --served-model-name=BAAI/bge-reranker-v2-m3
+      - --hostname=0.0.0.0
+      - --port=8000
+      - --auto-truncate
+
+  # ───────────── ollama: one endpoint, many models ─────────────
+  # Pull on a CONNECTED machine (`ollama pull qwen3.6:35b qwen3-embedding:0.6b`) and copy its
+  # models dir to $MODELS_DIR/ollama (see airgap/README.md). OLLAMA_NO_CLOUD=1 disables
+  # Ollama's cloud models/web search. Ollama has no rerank endpoint and no tenant-salted cache.
+  # CPU by default; for GPU add a deploy.resources.reservations.devices block as above.
+  # The models dir is mounted read-write because Ollama manages its own blob store.
+  ollama:
+    <<: *hardening
+    profiles: [ollama]
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.35.0}
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MODELS: /models/ollama
+      OLLAMA_NO_CLOUD: "1"
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-32768}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-2}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
+      DO_NOT_TRACK: "1"
+    volumes:
+      - ${MODELS_DIR:-./models}/ollama:/models/ollama
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+networks:
+  backend:
+    internal: true
+  edge:
+    driver: bridge
+    driver_opts:
+      # No SNAT for traffic leaving this network => no internet access from it, while
+      # published ports (DNAT inbound) still work. Pair with the DOCKER-USER rules in the
+      # README for a hard guarantee.
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+volumes:
+  pgdata:
+  qdrant-data:
+  qdrant-snapshots:
+  valkey-data:
+  vllm-cache-qwen3-small:
+  vllm-cache-qwen3-large:
+  vllm-cache-qwen3-moe:
+  vllm-cache-gpt-oss:
+  vllm-cache-rerank:

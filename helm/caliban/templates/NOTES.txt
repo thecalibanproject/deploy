@@ -1,0 +1,46 @@
+Caliban {{ .Chart.AppVersion }} deployed as "{{ .Release.Name }}" (mode: {{ .Values.mode }}).
+
+Image: {{ include "caliban.image" . }}
+
+Endpoints (in-cluster):
+  data plane     http://{{ include "caliban.fullname" . }}-router.{{ .Release.Namespace }}.svc:{{ .Values.router.service.port }}/v1
+  control plane  http://{{ include "caliban.fullname" . }}-control-plane.{{ .Release.Namespace }}.svc:{{ .Values.controlPlane.service.port }}/
+
+{{- $pools := list }}
+{{- range .Values.modelPools.pools }}{{- if .enabled }}{{- $pools = append $pools (printf "%s (http://%s:%v/v1)" .name (.serviceName | default .name) (.port | default $.Values.modelPools.defaults.port)) }}{{- end }}{{- end }}
+{{- if $pools }}
+
+Model pools (no egress; reachable only from the Caliban data plane):
+{{- range $pools }}
+  {{ . }}
+{{- end }}
+  First start loads weights from the models PVC and can take many minutes:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/component=model-pool -w
+{{- end }}
+
+Quick check:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "caliban.fullname" . }}-router 8080:{{ .Values.router.service.port }} &
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "caliban.fullname" . }}-control-plane 8081:{{ .Values.controlPlane.service.port }} &
+  ./scripts/smoke.sh
+
+Secrets this release reads (create them first unless auth.create=true):
+  {{ include "caliban.authSecretName" . }}  keys: {{ .Values.auth.adminTokenKey }}, {{ .Values.auth.kekKey }}
+  {{ .Values.database.existingSecret }}  key: {{ .Values.database.urlKey }}
+{{- with .Values.providerKeys.existingSecret }}
+  {{ . }}  (all keys exposed as env vars for BYOK)
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicy: default-deny. Egress allowed to cluster DNS, datastores, local models
+{{- if .Values.networkPolicy.egress.providers }} and {{ len .Values.networkPolicy.egress.providers }} BYOK provider(s).{{ else }} only (no internet).{{ end }}
+{{- else }}
+
+WARNING: networkPolicy.enabled=false. Pods have unrestricted egress.
+{{- end }}
+{{- if .Values.auth.create }}
+
+WARNING: auth.create=true stores the admin token and KEK in the Helm release. Dev only.
+{{- end }}
+
+Recommended namespace label:
+  kubectl label ns {{ .Release.Namespace }} pod-security.kubernetes.io/enforce=restricted

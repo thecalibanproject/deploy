@@ -1,0 +1,3 @@
+{{- if eq .Values.mode "split" }}
+{{ include "caliban.deployment" (dict "root" . "component" "control-plane" "values" .Values.controlPlane) }}
+{{- end }}

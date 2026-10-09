@@ -1,0 +1,25 @@
+# Dockerfile-specific ignore file (BuildKit picks up <Dockerfile>.dockerignore).
+# Paths are relative to the build context, i.e. the parent dir (~/caliban).
+
+# Only core/ and web/ are needed.
+docs
+deploy
+ml
+sdk-typescript
+sdk-python
+
+**/.git
+**/.github
+**/.idea
+**/.vscode
+**/.DS_Store
+**/*.log
+**/.env
+**/.env.*
+
+core/target
+core/target-*
+web/node_modules
+web/dist
+web/.vite
+web/coverage

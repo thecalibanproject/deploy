@@ -1,0 +1,35 @@
+apiVersion: v2
+name: caliban
+description: Caliban AI gateway (router + control plane). On-prem first, zero egress by default, BYOK.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords: [llm, gateway, ai, on-prem, air-gapped, byok]
+annotations:
+  # Images this chart deploys, for air-gap mirroring tools.
+  caliban.io/images: |
+    - caliban/caliban:0.1.0
+    - vllm/vllm-openai:v0.30.0
+    - ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.4
+    - ghcr.io/ggml-org/llama.cpp:server-b11347
+    - lmsysorg/sglang:v0.5.21
+
+# Postgres, Qdrant and Valkey are NOT bundled as subcharts on purpose: production sites
+# bring their own (managed or operator-run) and the chart only needs URLs/secrets.
+# If you want them in the same release, vendor licence-compatible charts into charts/ and
+# uncomment the matching entries (all disabled by default via `condition`).
+# Avoid Bitnami charts/images for air-gapped installs: since 2025 most Bitnami images
+# are no longer freely published, which breaks offline mirroring.
+#
+# dependencies:
+#   - name: qdrant               # Apache-2.0, https://qdrant.github.io/qdrant-helm
+#     version: "1.x.x"
+#     repository: "file://charts/qdrant"
+#     condition: qdrant.deploy
+#   - name: valkey               # BSD-3, https://valkey.io/valkey-helm/
+#     version: "0.x.x"
+#     repository: "file://charts/valkey"
+#     condition: valkey.deploy
+#   # Postgres: prefer the CloudNativePG operator (Apache-2.0) and a `Cluster` resource;
+#   # point database.existingSecret at the `<cluster>-app` secret's `uri` key.

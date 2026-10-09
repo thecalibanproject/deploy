@@ -1,0 +1,51 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.cilium.enabled }}
+{{- $hosts := list }}
+{{- range .Values.networkPolicy.egress.providers }}{{- range .hosts }}{{- $hosts = append $hosts . }}{{- end }}{{- end }}
+{{- if $hosts }}
+# FQDN allow-list for BYOK providers (standard NetworkPolicy cannot match hostnames).
+# Cilium allows are additive to the default-deny NetworkPolicy above.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "caliban.fullname" . }}-provider-fqdn
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+    # Model pools never get provider egress.
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: NotIn
+        values: [model-pool]
+  egress:
+    # DNS through Cilium's proxy so toFQDNs can learn the provider IPs.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: ANY }
+          rules:
+            # "*" keeps in-cluster names (postgres, qdrant, ...) resolvable; the DNS proxy
+            # is needed for toFQDNs to work, not to filter queries.
+            dns:
+              - matchPattern: "*"
+    {{- range .Values.networkPolicy.egress.providers }}
+    {{- if .hosts }}
+    # BYOK provider: {{ .name }}
+    - toFQDNs:
+        {{- range .hosts }}
+        - matchName: {{ . | quote }}
+        {{- end }}
+      toPorts:
+        - ports:
+            {{- range (.ports | default (list 443)) }}
+            - { port: {{ . | quote }}, protocol: TCP }
+            {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

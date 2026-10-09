@@ -1,0 +1,343 @@
+# Model weights for Caliban's on-prem pools: what `bundle.sh fetch` downloads on a connected
+# machine and what `bundle.sh` copies into the signed offline bundle.
+# Background and hardware tiers: docs/research/09-open-models-on-prem.md.
+#
+# Licence policy (docs/architecture/repos-and-conventions.md):
+#   Only permissive, redistributable licences in the bundle by default: apache-2.0, mit.
+#   bundle.sh (both `fetch` and bundling) refuses anything else unless --allow-licence <id> is
+#   passed explicitly, after legal review.
+#
+# EXCLUDED by default (licences checked on Hugging Face, 2026-10-02):
+#   meta-llama/Llama-4-*          Llama 4 Community Licence + AUP: the multimodal models' grant
+#                                 excludes EU-domiciled individuals/companies; 700M-MAU clause.
+#   google/gemma-3-*, google/embeddinggemma-*   Gemma Terms of Use (custom). Gemma 4 IS apache-2.0.
+#   Qwen/Qwen3.8-Flash-Next       "Qwen Community License 1.0": MaaS / AI-work-assistant businesses
+#                                 need a separate licence. Qwen/Qwen3.8-2.4T-A95B: "Qwen3.8-Max License".
+#   mistralai/Mistral-Medium-3.5-128B, mistralai/Devstral-2-123B-Instruct-2512
+#                                 "Modified MIT": no rights if company revenue > US$20M/month.
+#   MiniMaxAI/MiniMax-M2.7 (non-commercial), MiniMaxAI/MiniMax-M3, moonshotai/Kimi-K3,
+#   zai-org/GLM-5.3 (custom terms), jinaai/jina-embeddings-v5-*, jinaai/jina-reranker-v3 (cc-by-nc-4.0).
+#   Candidates for --allow-licence after review: openmdw-1.1 (NVIDIA Nemotron 3.5).
+#
+# Fields (keep the YAML flat: one key per line, 4-space field indent; bundle.sh parses it with
+# awk so neither the connected host nor the site needs YAML tooling):
+#   id        upstream model id (and the served model name in compose/config/caliban.toml)
+#   source    hf://org/repo | https://... (curl {a,b} globbing allowed) | ollama://tag,tag
+#   revision  exact commit to fetch. "TODO-pin-commit" = not pinned yet: `fetch` refuses it
+#             unless --allow-unpinned. The `# main@2026-10-02` comment is the HEAD commit seen on
+#             that date; copy it into `revision` after your own review.
+#   include   optional space-separated globs passed to `hf download --include`
+#   exclude   optional space-separated globs passed to `hf download --exclude`
+#   licence   SPDX-ish id from the repo's cardData.license; checked by bundle.sh
+#   dir       directory under $MODELS_DIR (and under models/ in the bundle)
+#   format    informational
+#   engine    vllm | tei | llama.cpp | ollama (informational)
+#   profiles  comma-separated compose profiles that use it; `k8s` = Helm modelPools only
+#   bundle    true = part of the default bundle
+#   size      approximate download size (informational)
+#   sha256    tree hash of dir (airgap/README.md §2); "" = not yet pinned.
+#             `bundle.sh fetch --pin` writes it here; bundling fails on a mismatch.
+
+models:
+  # ══════════════ Default bundle: 1×24 GB GPU tier + CPU tier ══════════════
+
+  # Chat, 1×24 GB (compose profile qwen3-small). Served with online FP8.
+  - id: Qwen/Qwen3.5-9B
+    source: hf://Qwen/Qwen3.5-9B
+    revision: "TODO-pin-commit"   # main@2026-10-02: c202236235762e1c871ad0ccb60c8ee5ba337b9a
+    licence: apache-2.0
+    dir: qwen3.5-9b
+    format: safetensors-bf16
+    engine: vllm
+    profiles: qwen3-small
+    bundle: true
+    size: 19.3GB
+    sha256: ""
+
+  # PII NER (L1) loaded in-process by Caliban itself (not a model server). Prefer fetching with
+  # ml/scripts/fetch_pii_ner.py, which writes the hash-verified manifest.json Caliban requires,
+  # then copy ml/artifacts/pii_ner/ to the site's CALIBAN_PII_MODEL_DIR (compose: ./models/pii).
+  # Licence sign-off pending on the CC-BY-SA fine-tuning text: core/crates/caliban-pii/MODELS.md.
+  - id: Wismut/nym-pii-multilingual-small
+    source: hf://Wismut/nym-pii-multilingual-small
+    revision: "4348999cd3c2e20c49615e9af7c6bbb45b64cd85"
+    licence: mit
+    include: int8/* tokenizer.json config.json
+    dir: pii/nym-pii-multilingual-small-int8
+    format: onnx-int8
+    engine: caliban
+    profiles: core
+    bundle: true
+    size: 151MB
+    sha256: ""
+
+  # Embeddings, GPU (TEI cuda) and CPU (TEI cpu). 1024-d.
+  - id: Qwen/Qwen3-Embedding-0.6B
+    source: hf://Qwen/Qwen3-Embedding-0.6B
+    revision: "TODO-pin-commit"   # main@2026-10-02: 97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3
+    licence: apache-2.0
+    dir: qwen3-embedding-0.6b
+    format: safetensors-bf16
+    engine: tei
+    profiles: embeddings,cpu
+    bundle: true
+    size: 1.2GB
+    sha256: ""
+
+  # Reranker, GPU (vLLM pooling runner with the Qwen3ForSequenceClassification override).
+  - id: Qwen/Qwen3-Reranker-0.6B
+    source: hf://Qwen/Qwen3-Reranker-0.6B
+    revision: "TODO-pin-commit"   # main@2026-10-02: e61197ed45024b0ed8a2d74b80b4d909f1255473
+    licence: apache-2.0
+    dir: qwen3-reranker-0.6b
+    format: safetensors-bf16
+    engine: vllm
+    profiles: reranker
+    bundle: true
+    size: 1.2GB
+    sha256: ""
+
+  # Chat, CPU only (llama.cpp). MoE with 3B active parameters. Only the Q4_K_M file is fetched.
+  - id: ggml-org/Qwen3.6-35B-A3B-GGUF
+    source: hf://ggml-org/Qwen3.6-35B-A3B-GGUF
+    revision: "TODO-pin-commit"   # main@2026-10-02: baec3ebee244827cda0f4557eafa8b28f7545fa6
+    include: "Qwen3.6-35B-A3B-Q4_K_M.gguf"
+    licence: apache-2.0
+    dir: qwen3.6-35b-a3b-gguf
+    format: gguf-q4_k_m
+    engine: llama.cpp
+    profiles: cpu
+    bundle: true
+    size: 20.4GB
+    sha256: ""
+
+  # Reranker, CPU (TEI cpu; XLM-RoBERTa cross-encoder).
+  - id: BAAI/bge-reranker-v2-m3
+    source: hf://BAAI/bge-reranker-v2-m3
+    revision: "TODO-pin-commit"   # main@2026-10-02: 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
+    exclude: "assets/*"
+    licence: apache-2.0
+    dir: bge-reranker-v2-m3
+    format: safetensors-f32
+    engine: tei
+    profiles: cpu
+    bundle: true
+    size: 2.3GB
+    sha256: ""
+
+  # gpt-oss-20b (compose profile gpt-oss): kept from v0.1 as the cross-family fallback.
+  - id: openai/gpt-oss-20b
+    source: hf://openai/gpt-oss-20b
+    revision: "TODO-pin-commit"   # main@2026-10-02: 6cee5e81ee83917806bbde320786a8fb61efebee
+    exclude: "original/* metal/*"
+    licence: apache-2.0
+    dir: gpt-oss-20b
+    format: safetensors-mxfp4
+    engine: vllm
+    profiles: gpt-oss
+    bundle: true
+    size: 13.8GB
+    sha256: ""
+
+  # Harmony tokenizer encodings needed by gpt-oss under vLLM. Without them vLLM tries to
+  # download them from openaipublic.blob.core.windows.net at start-up (egress!).
+  # Served to vLLM via TIKTOKEN_ENCODINGS_BASE=/models/tiktoken.
+  - id: openai/tiktoken-encodings
+    source: https://openaipublic.blob.core.windows.net/encodings/{o200k_base,cl100k_base}.tiktoken
+    revision: "n/a"
+    licence: mit
+    dir: tiktoken
+    format: tiktoken
+    engine: vllm
+    profiles: gpt-oss
+    bundle: true
+    size: 5MB
+    sha256: ""
+
+  # ══════════════ Optional: larger GPU tiers (bundle: false; fetch/bundle with --model ID) ══════════════
+
+  # 1×48 GB / 1×80 GB (compose profile qwen3-large).
+  - id: Qwen/Qwen3.8-27B-FP8
+    source: hf://Qwen/Qwen3.8-27B-FP8
+    revision: "TODO-pin-commit"   # main@2026-10-02: 017b9c7af6b5689d5dd426a76e0bc077eb5ca20a
+    licence: apache-2.0
+    dir: qwen3.8-27b-fp8
+    format: safetensors-fp8
+    engine: vllm
+    profiles: qwen3-large
+    bundle: false
+    size: 30.9GB
+    sha256: ""
+
+  # 1×48 GB / 1×80 GB throughput tier (compose profile qwen3-moe).
+  - id: Qwen/Qwen3.6-35B-A3B-FP8
+    source: hf://Qwen/Qwen3.6-35B-A3B-FP8
+    revision: "TODO-pin-commit"   # main@2026-10-02: 95a723d08a9490559dae23d0cff1d9466213d989
+    licence: apache-2.0
+    dir: qwen3.6-35b-a3b-fp8
+    format: safetensors-fp8
+    engine: vllm
+    profiles: qwen3-moe
+    bundle: false
+    size: 37.5GB
+    sha256: ""
+
+  # 1×80 GB tier embedder / reranker (2560-d; changing the embedder means re-indexing Qdrant).
+  - id: Qwen/Qwen3-Embedding-4B
+    source: hf://Qwen/Qwen3-Embedding-4B
+    revision: "TODO-pin-commit"   # main@2026-10-02: 5cf2132abc99cad020ac570b19d031efec650f2b
+    licence: apache-2.0
+    dir: qwen3-embedding-4b
+    format: safetensors-bf16
+    engine: tei
+    profiles: k8s
+    bundle: false
+    size: 8.1GB
+    sha256: ""
+
+  - id: Qwen/Qwen3-Reranker-4B
+    source: hf://Qwen/Qwen3-Reranker-4B
+    revision: "TODO-pin-commit"   # main@2026-10-02: 22e683669bc0f0bd69640a1354a6d0aebcfeede5
+    licence: apache-2.0
+    dir: qwen3-reranker-4b
+    format: safetensors-bf16
+    engine: vllm
+    profiles: k8s
+    bundle: false
+    size: 8.1GB
+    sha256: ""
+
+  # 2–8×80 GB tier (4096-d embedder, 8B reranker, large MoE chat).
+  - id: Qwen/Qwen3-Embedding-8B
+    source: hf://Qwen/Qwen3-Embedding-8B
+    revision: "TODO-pin-commit"   # main@2026-10-02: 1d8ad4ca9b3dd8059ad90a75d4983776a23d44af
+    licence: apache-2.0
+    dir: qwen3-embedding-8b
+    format: safetensors-bf16
+    engine: tei
+    profiles: k8s
+    bundle: false
+    size: 15.2GB
+    sha256: ""
+
+  - id: Qwen/Qwen3-Reranker-8B
+    source: hf://Qwen/Qwen3-Reranker-8B
+    revision: "TODO-pin-commit"   # main@2026-10-02: 77d193c791ed757ca307ee72715aa132723da912
+    licence: apache-2.0
+    dir: qwen3-reranker-8b
+    format: safetensors-bf16
+    engine: vllm
+    profiles: k8s
+    bundle: false
+    size: 16.4GB
+    sha256: ""
+
+  - id: Qwen/Qwen3.5-122B-A10B-FP8
+    source: hf://Qwen/Qwen3.5-122B-A10B-FP8
+    revision: "TODO-pin-commit"   # main@2026-10-02: a099dee70ccfcd8d5dda56aaa0b60cb8ecadabc9
+    licence: apache-2.0
+    dir: qwen3.5-122b-a10b-fp8
+    format: safetensors-fp8
+    engine: vllm
+    profiles: k8s
+    bundle: false
+    size: 127.2GB
+    sha256: ""
+
+  - id: Qwen/Qwen3.5-397B-A17B-FP8
+    source: hf://Qwen/Qwen3.5-397B-A17B-FP8
+    revision: "TODO-pin-commit"   # main@2026-10-02: ea5b4f81096f3901c91dea97f81324302495781d
+    licence: apache-2.0
+    dir: qwen3.5-397b-a17b-fp8
+    format: safetensors-fp8
+    engine: vllm
+    profiles: k8s
+    bundle: false
+    size: 406.2GB
+    sha256: ""
+
+  - id: deepseek-ai/DeepSeek-V4-Flash-0731
+    source: hf://deepseek-ai/DeepSeek-V4-Flash-0731
+    revision: "TODO-pin-commit"   # main@2026-10-02: 7872f01b1d1fe23eabc4c98b48bffcef5a386062
+    licence: mit
+    dir: deepseek-v4-flash-0731
+    format: safetensors-fp4-fp8
+    engine: vllm
+    profiles: k8s
+    bundle: false
+    size: 160GB
+    sha256: ""
+
+  # gpt-oss-120b: 1×80 GB all-reasoning alternative.
+  - id: openai/gpt-oss-120b
+    source: hf://openai/gpt-oss-120b
+    revision: "TODO-pin-commit"   # main@2026-10-02: b5c939de8f754692c1647ca79fbf85e8c1e70f8a
+    exclude: "original/* metal/*"
+    licence: apache-2.0
+    dir: gpt-oss-120b
+    format: safetensors-mxfp4
+    engine: vllm
+    profiles: k8s
+    bundle: false
+    size: 65GB
+    sha256: ""
+
+  # ══════════════ Optional: alternative CPU / single-endpoint models ══════════════
+
+  # Smaller CPU chat (dense 9B, 5.7 GB). Use with
+  #   QWEN3_CPU_GGUF=qwen3.5-9b-gguf/Qwen3.5-9B-Q4_K_M.gguf  QWEN3_CPU_ALIAS=unsloth/Qwen3.5-9B-GGUF
+  # and a matching [[models]] entry (upstream_model = the alias).
+  - id: unsloth/Qwen3.5-9B-GGUF
+    source: hf://unsloth/Qwen3.5-9B-GGUF
+    revision: "TODO-pin-commit"   # main@2026-10-02: 3885219b6810b007914f3a7950a8d1b469d598a5
+    include: "Qwen3.5-9B-Q4_K_M.gguf"
+    licence: apache-2.0
+    dir: qwen3.5-9b-gguf
+    format: gguf-q4_k_m
+    engine: llama.cpp
+    profiles: cpu
+    bundle: false
+    size: 5.7GB
+    sha256: ""
+
+  - id: ggml-org/gpt-oss-20b-GGUF
+    source: hf://ggml-org/gpt-oss-20b-GGUF
+    revision: "TODO-pin-commit"   # main@2026-10-02: ef9b12f2ff56c69cf32153a02784e7a3c88bf524
+    include: "gpt-oss-20b-MXFP4.gguf"
+    licence: apache-2.0
+    dir: gpt-oss-20b-gguf
+    format: gguf-mxfp4
+    engine: llama.cpp
+    profiles: cpu
+    bundle: false
+    size: 12.1GB
+    sha256: ""
+
+  # Multilingual dense+sparse embedder (vLLM BgeM3EmbeddingModel or TEI). Only a .bin checkpoint.
+  - id: BAAI/bge-m3
+    source: hf://BAAI/bge-m3
+    revision: "TODO-pin-commit"   # main@2026-10-02: 5617a9f61b028005a4858fdac845db406aefb181
+    exclude: "imgs/* onnx/* long.jpg"
+    licence: mit
+    dir: bge-m3
+    format: pytorch-bin
+    engine: tei
+    profiles: k8s
+    bundle: false
+    size: 2.3GB
+    sha256: ""
+
+  # Ollama library models cannot be pinned by HF revision (Ollama re-quantizes them), so
+  # `fetch` only prints the manual procedure. For sovereign sites prefer importing the pinned
+  # GGUF above with a Modelfile (`FROM /models/qwen3.6-35b-a3b-gguf/Qwen3.6-35B-A3B-Q4_K_M.gguf`).
+  - id: ollama/library
+    source: ollama://qwen3.6:35b,qwen3-embedding:0.6b
+    revision: "n/a"
+    licence: apache-2.0
+    dir: ollama
+    format: ollama-blobs
+    engine: ollama
+    profiles: ollama
+    bundle: false
+    size: 25GB
+    sha256: ""

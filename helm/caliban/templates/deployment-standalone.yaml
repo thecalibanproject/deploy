@@ -1,0 +1,9 @@
+{{- if not (has .Values.mode (list "split" "standalone")) }}
+{{- fail (printf "mode must be 'split' or 'standalone', got %q" .Values.mode) }}
+{{- end }}
+{{- if eq .Values.mode "standalone" }}
+{{- if gt (int .Values.standalone.replicas) 1 }}
+{{- fail "standalone.replicas > 1 is not supported (embedded control plane); use mode=split to scale" }}
+{{- end }}
+{{ include "caliban.deployment" (dict "root" . "component" "standalone" "values" .Values.standalone) }}
+{{- end }}

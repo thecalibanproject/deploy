@@ -1,0 +1,240 @@
+# Air-gapped / sovereign profile. Use on top of values.yaml:
+#   helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml
+#
+# Assumes the images from the offline bundle were pushed to the site registry with
+# airgap/load.sh --registry registry.internal:5000 (paths are kept: caliban/caliban, ...).
+
+global:
+  imageRegistry: registry.internal:5000
+  imagePullSecrets: []
+
+image:
+  # Pin by digest; load.sh prints it (also in images.txt inside the bundle).
+  tag: "0.1.0"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Embedded control plane, single Deployment. Switch to "split" to scale routers.
+mode: standalone
+
+auth:
+  existingSecret: caliban-auth
+
+database:
+  # On-site Postgres, e.g. a CloudNativePG cluster's app secret (key "uri").
+  existingSecret: caliban-pg-app
+  urlKey: uri
+
+qdrant:
+  url: http://qdrant.caliban-data.svc.cluster.local:6334
+
+valkey:
+  existingSecret: caliban-valkey
+  urlKey: url
+
+# No telemetry endpoint: nothing leaves the site.
+otel:
+  endpoint: ""
+
+config:
+  server:
+    router_addr: "0.0.0.0:8080"
+    control_plane_addr: "0.0.0.0:8081"
+    web_dir: /usr/share/caliban/web
+  security:
+    egress: deny_by_default
+    admin_token:
+      env: CALIBAN_ADMIN_TOKEN
+  cache:
+    exact_enabled: true
+    exact_max_entries: 100000
+    exact_ttl_secs: 3600
+  pii:
+    default_mode: reversible
+  # Open-weight, Apache-2.0 only (see airgap/models.lock.yaml), served by the in-release
+  # modelPools below. No BYOK provider = no internet path at all.
+  providers:
+    - id: vllm-qwen3-large
+      kind: openai_compatible
+      base_url: http://qwen3-large:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: true
+    - id: vllm-gpt-oss
+      kind: openai_compatible
+      base_url: http://gpt-oss:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: true
+    - id: tei-embed
+      kind: openai_compatible
+      base_url: http://embed:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: false
+    - id: vllm-rerank
+      kind: openai_compatible
+      base_url: http://rerank:8000/v1
+      trust_tier: t0_sovereign
+      cache_salt: true
+  models:
+    - id: local/qwen3.8-27b
+      provider: vllm-qwen3-large
+      upstream_model: Qwen/Qwen3.8-27B-FP8
+      kind: chat
+      family: qwen3.8
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 262144
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+      capabilities:
+        tools: true
+        vision: true
+        reasoning: hybrid
+        reasoning_control: enable_thinking
+        inline_think_tags: false
+    - id: local/gpt-oss-20b
+      provider: vllm-gpt-oss
+      upstream_model: openai/gpt-oss-20b
+      kind: chat
+      family: gpt-oss
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 131072
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+      capabilities:
+        tools: true
+        vision: false
+        reasoning: always
+        reasoning_control: reasoning_effort
+        inline_think_tags: false
+    - id: local/qwen3-embedding-0.6b
+      provider: tei-embed
+      upstream_model: Qwen/Qwen3-Embedding-0.6B
+      kind: embedding
+      family: qwen3-embedding
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 32768
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+    - id: local/qwen3-reranker-0.6b
+      provider: vllm-rerank
+      upstream_model: Qwen/Qwen3-Reranker-0.6B
+      kind: rerank
+      family: qwen3-reranker
+      trust_tier: t0_sovereign
+      licence: apache-2.0
+      context_window: 8192
+      price_in_per_mtok: 0.0
+      price_out_per_mtok: 0.0
+  tenants:
+    - id: default
+      name: Default tenant
+      pii_mode: reversible
+      api_key_hashes: []
+      routes:
+        - intent: default
+          models: [local/qwen3.8-27b, local/gpt-oss-20b]
+        - intent: chat
+          models: [local/qwen3.8-27b, local/gpt-oss-20b]
+        - intent: code
+          models: [local/qwen3.8-27b, local/gpt-oss-20b]
+        - intent: analytics
+          models: [local/qwen3.8-27b, local/gpt-oss-20b]
+        - intent: summarize
+          models: [local/qwen3.8-27b, local/gpt-oss-20b]
+        - intent: extraction
+          models: [local/qwen3.8-27b, local/gpt-oss-20b]
+
+# In-cluster engines fed from the bundle's models/ directory. Copy it into a PVC first, e.g.
+#   kubectl -n caliban apply -f caliban-models-pvc.yaml   (ReadOnlyMany/ReadWriteMany if pools
+#   span nodes), then `kubectl cp` / a loader Job to copy models/<dir> into it.
+# Images come from global.imageRegistry (pushed by load.sh --registry).
+# GPUs: Kubernetes gives each pool whole GPUs, so this profile needs 4: one 80 GB card for
+# qwen3-large (262k context), one >= 16 GB for gpt-oss, and two small ones (>= 8 GB) for embed
+# and rerank. With fewer GPUs, disable gpt-oss, or run embed on the TEI cpu-1.9.4 image with
+# gpus: 0 (rerank then needs the bge-reranker-v2-m3 TEI pool instead; see values.yaml).
+modelPools:
+  defaults:
+    weights:
+      existingClaim: caliban-models
+    nodeSelector:
+      nvidia.com/gpu.present: "true"
+  pools:
+    - name: qwen3-large
+      enabled: true
+      args:
+        - /models/qwen3.8-27b-fp8
+        - --served-model-name=Qwen/Qwen3.8-27B-FP8
+        - --host=0.0.0.0
+        - --port=8000
+        - --max-model-len=262144
+        - --gpu-memory-utilization=0.90
+        - --reasoning-parser=qwen3
+        - --enable-auto-tool-choice
+        - --tool-call-parser=qwen3_coder
+    - name: gpt-oss
+      enabled: true
+      env:
+        - { name: TIKTOKEN_ENCODINGS_BASE, value: /models/tiktoken }
+      args:
+        - /models/gpt-oss-20b
+        - --served-model-name=openai/gpt-oss-20b
+        - --host=0.0.0.0
+        - --port=8000
+        - --max-model-len=131072
+        - --enable-auto-tool-choice
+        - --tool-call-parser=openai
+    - name: embed
+      enabled: true
+      image: { repository: ghcr.io/huggingface/text-embeddings-inference, tag: cuda-1.9.4 }
+      command: []
+      resources:
+        requests: { cpu: "2", memory: 4Gi }
+        limits: { memory: 8Gi }
+      shmSize: 1Gi
+      cacheSize: 2Gi
+      args:
+        - --model-id=/models/qwen3-embedding-0.6b
+        - --served-model-name=Qwen/Qwen3-Embedding-0.6B
+        - --hostname=0.0.0.0
+        - --port=8000
+        - --auto-truncate
+    - name: rerank
+      enabled: true
+      resources:
+        requests: { cpu: "2", memory: 8Gi }
+        limits: { memory: 16Gi }
+      shmSize: 2Gi
+      args:
+        - /models/qwen3-reranker-0.6b
+        - --served-model-name=Qwen/Qwen3-Reranker-0.6B
+        - --host=0.0.0.0
+        - --port=8000
+        - --runner=pooling
+        - '--hf-overrides={"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}'
+        - --max-model-len=8192
+        - --gpu-memory-utilization=0.85
+
+networkPolicy:
+  enabled: true
+  ingress:
+    router:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+      - namespaceSelector: { matchLabels: { caliban.io/client: "true" } }
+    controlPlane:
+      - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+  egress:
+    datastores:
+      - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: caliban-data } } }]
+        ports:
+          - { port: 5432, protocol: TCP }
+          - { port: 6333, protocol: TCP }
+          - { port: 6334, protocol: TCP }
+          - { port: 6379, protocol: TCP }
+    # Engines run in-release (modelPools) and are allowed automatically. Keep this entry only
+    # if you also run engines in a separate `llm` namespace.
+    localModels: []
+    # Zero egress: no providers.
+    providers: []
+    extra: []
