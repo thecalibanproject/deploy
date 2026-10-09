@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  helm:
+    name: Helm lint and template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.22.0
+      - run: helm lint --strict helm/caliban
+      - run: helm lint --strict helm/caliban -f helm/caliban/values-airgap.yaml
+      - run: helm template caliban helm/caliban > /dev/null
+      - run: helm template caliban helm/caliban --set router.mode=static > /dev/null
+      - run: helm template caliban helm/caliban -f helm/caliban/values-airgap.yaml > /dev/null
+
+  compose:
+    name: Compose config
+    runs-on: ubuntu-latest
+    env:
+      # Required values that .env.example leaves blank on purpose. Placeholders, not secrets.
+      CALIBAN_ADMIN_TOKEN: ci-placeholder
+      CALIBAN_KEK: ci-placeholder
+      POSTGRES_PASSWORD: ci-placeholder
+      VALKEY_PASSWORD: ci-placeholder
+    steps:
+      - uses: actions/checkout@v7
+      - run: cp compose/.env.example compose/.env
+      - name: docker compose config (every profile, with and without the BYOK egress override)
+        run: |
+          fail=0
+          for p in "" qwen3-small qwen3-large qwen3-moe gpt-oss embeddings reranker cpu ollama; do
+            prof=()
+            if [ -n "$p" ]; then prof=(--profile "$p"); fi
+            docker compose -f compose/docker-compose.yml "${prof[@]}" config -q \
+              || { echo "::error::compose config failed (profile '$p')"; fail=1; }
+            docker compose -f compose/docker-compose.yml -f compose/docker-compose.byok-egress.yml "${prof[@]}" config -q \
+              || { echo "::error::compose config with byok-egress failed (profile '$p')"; fail=1; }
+          done
+          exit "$fail"
+
+  shell:
+    name: Shellcheck and Dockerfile check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: >-
+          docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.11.0
+          -x images/build.sh airgap/bundle.sh airgap/load.sh scripts/smoke.sh
+      # Lints the Dockerfile only; no layers are built, so the core/web siblings are not needed.
+      - run: docker buildx build --check -f images/caliban.Dockerfile ..
