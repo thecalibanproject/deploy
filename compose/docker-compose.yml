@@ -101,6 +101,10 @@ services:
       # mounted /models/pii (e.g. /models/pii/nym-pii-multilingual-small-int8/3.0.0); empty = off.
       CALIBAN_PII_NER_DIR: ${CALIBAN_PII_NER_DIR:-}
       CALIBAN_PII_NER_SESSIONS: ${CALIBAN_PII_NER_SESSIONS:-2}
+      # TCP_NODELAY on accepted connections. Unset = off (Nagle on). On Linux, with Nagle on, a
+      # stream's first SSE frame can wait for the client's delayed ACK (about 40 ms); set it to 1
+      # (AWS testbed results, core bench/RESULTS-aws-2026-10.md).
+      CALIBAN_TCP_NODELAY: ${CALIBAN_TCP_NODELAY:-}
       # Telemetry stays off unless you point this at your own collector.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
@@ -241,6 +245,10 @@ services:
   # ───────────── qwen3-large: Qwen3.8-27B-FP8 on vLLM (1×48 GB / 1×80 GB) ─────────────
   # Apache-2.0. Weights: $MODELS_DIR/qwen3.8-27b-fp8 (30.9 GB). FP8 KV keeps 131072 tokens
   # in budget on a 48 GB card; on 80 GB raise QWEN3_LARGE_MAX_MODEL_LEN to 262144.
+  # Measured on 1 x L40S (AWS g6e.xlarge, vLLM 0.30.0) next to embed and rerank: with vLLM's
+  # default max-num-seqs the CUDA graph memory profile runs out of memory (the hybrid
+  # attention's per-sequence state), and at 0.80 the KV cache was 0.1 GiB short of one
+  # 131072-token sequence. 32 sequences and 0.82 start and leave about 5 GiB of KV cache.
   # Native vision is kept on (images/videos in chat), so the catalogue says vision = true.
   qwen3-large:
     <<: [*hardening, *vllm]
@@ -252,7 +260,8 @@ services:
       - --port=8000
       - --tensor-parallel-size=${QWEN3_LARGE_TP:-1}
       - --max-model-len=${QWEN3_LARGE_MAX_MODEL_LEN:-131072}
-      - --gpu-memory-utilization=${QWEN3_LARGE_GPU_UTIL:-0.80}
+      - --gpu-memory-utilization=${QWEN3_LARGE_GPU_UTIL:-0.82}
+      - --max-num-seqs=${QWEN3_LARGE_MAX_NUM_SEQS:-32}
       - --kv-cache-dtype=${QWEN3_LARGE_KV_CACHE_DTYPE:-fp8}
       - --enable-prefix-caching
       - --reasoning-parser=qwen3

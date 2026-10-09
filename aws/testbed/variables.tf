@@ -344,9 +344,9 @@ variable "buildx_version" {
 # ─────────────────────────── Load generator ───────────────────────────
 
 variable "bench_ref" {
-  description = "core branch that holds the bench crate."
+  description = "core branch that holds the bench crate (caliban-bench is on main)."
   type        = string
-  default     = "feat/bench"
+  default     = "main"
 }
 
 variable "bench_package" {

@@ -234,10 +234,10 @@ Prices are **estimates for eu-central-1, on-demand, Linux, October 2026; verify 
 
 | Component | On-demand / hour | Typical spot / hour | Notes |
 |---|---|---|---|
-| gateway c8g.2xlarge (8 vCPU, 16 GiB) | ~$0.37 | ~$0.13 to 0.18 | c7i.2xlarge ~$0.42 |
-| loadgen c8g.2xlarge | ~$0.37 | ~$0.13 to 0.18 | |
+| gateway c8g.2xlarge (8 vCPU, 16 GiB) | $0.3628 (price list, 2026-10-09) | ~$0.19 to 0.20 (2026-10-09) | c7i.2xlarge ~$0.42 |
+| loadgen c8g.2xlarge | $0.3628 | ~$0.19 to 0.20 | |
 | router c8g.xlarge (4 vCPU, 8 GiB), each | ~$0.19 | ~$0.07 to 0.09 | c7i.xlarge ~$0.21 |
-| gpu g6e.xlarge (1 × L40S 48 GB) | ~$2.25 | ~$0.90 to 1.20 | us-east-1 lists $1.861 on-demand |
+| gpu g6e.xlarge (1 × L40S 48 GB) | $2.327 (price list, 2026-10-09) | $1.74 (1a), $2.07 (1c), $2.33 (1b) on 2026-10-09 | spot was close to on-demand; us-east-1 lists $1.861 on-demand |
 | gp3 root volume | ~$0.013 per 100 GB | | ~$0.0952 per GB-month; billed while stopped |
 | public IPv4 (public tier), each | $0.005 | | released while stopped |
 | SSM interface endpoints (3) | ~$0.036 | | auto toggle |
@@ -254,7 +254,7 @@ Inbound internet traffic (image pulls, Hugging Face downloads), S3 to EC2 in the
 |---|---|---|
 | (a) gateway overhead | gateway, loadgen | 0.77 |
 | (b) split mode, 4 routers | gateway, loadgen, 4 routers | 1.57 (0.77 + 0.20 per router) |
-| (c) GPU tier | gateway, loadgen, gpu | 1.7 to 2.0 with GPU spot; 3.05 with GPU on-demand |
+| (c) GPU tier | gateway, loadgen, gpu | about 2.5 with GPU spot at $1.74; 3.1 with GPU on-demand |
 | (d) zero egress, CPU only | gateway, loadgen (isolated) + 3 endpoints + flow logs | 0.80 |
 | (d) zero egress with GPU | + gpu (isolated, 300 GB) | 1.8 to 2.1 spot; 3.1 on-demand |
 
@@ -293,7 +293,17 @@ tofu apply                                   # defaults: gateway + loadgen, publ
 ```
 
 1. Wait for `ready` on both hosts.
-2. On the loadgen, start the mock upstream on port 9000 (bound to the private IP). The bench crate is being written on core's `feat/bench` branch. `loadgen.sh` builds it if the branch has the package `caliban-bench` (`bench_ref`, `bench_package`), or installs a prebuilt binary from `s3://<bucket>/tools/<arch>/caliban-bench`. Until it lands, `oha` is installed and any fast OpenAI-compatible mock will do; core's `scripts/mock_upstream.py` is single-threaded and for functional checks only. To rebuild after the branch moves: `cd /opt/caliban/src/core && git pull && cargo build --release -p caliban-bench`.
+2. The bench crate (`caliban-bench`, with the `mock-upstream` binary) is on core's `main`. `loadgen.sh` builds it from `bench_ref` (`bench_package`), or installs a prebuilt binary from `s3://<bucket>/tools/<arch>/caliban-bench`; `oha` is installed too. The suite measures each scenario direct to the mock and through Caliban (see core's `bench/RESULTS.md`). To run it across hosts, build `caliban`, `mock-upstream` and `caliban-bench` on the loadgen (`cargo build --release -p caliban -p caliban-bench`), copy them to the gateway through `s3://<bucket>/results/` (needs `results_upload = true`), then:
+
+   ```bash
+   # gateway: mock and gateways on ports the security group admits (9000-9001, 8000-8002)
+   CALIBAN_TCP_NODELAY=1 ./caliban-bench --caliban ./caliban --bind 0.0.0.0 --advertise "$GATEWAY_IP" \
+     --mock-ports 9000,9001 --gateway-ports 8000,8001,8002 --serve ep.json
+   # loadgen, with ep.json copied over
+   ./caliban-bench --remote ep.json --concurrency 1,16,64 --out cross.md --json cross.json
+   ```
+
+   Without `--serve`/`--remote`, `caliban-bench --caliban ./caliban` runs everything on one host. The binaries built on Amazon Linux 2023 cannot include the PII NER model (`--features ner`): the prebuilt ONNX Runtime needs a newer libstdc++ than AL2023's GCC 11. Build and run that variant in a `rust:1-trixie` container (`--network host`), like the Caliban image. Results of the first run: core `bench/RESULTS-aws-2026-10.md`.
 3. Register the mock as a provider, a model and the tenant route (admin API on the gateway):
 
    ```bash
@@ -333,11 +343,10 @@ tofu apply -var router_count=4               # 32 standard vCPUs with gateway + 
 ### (c) GPU open-model tier
 
 ```bash
-tofu apply -var gpu_enabled=true \
-  -var core_ref=feat/semantic-cache          # or feat/intent-knn, or main
+tofu apply -var gpu_enabled=true              # the semantic cache and intent kNN are on core main
 ```
 
-1. The GPU host (spot; `-var gpu_market=on-demand` if spot capacity is short) fetches Qwen3.8-27B-FP8, Qwen3-Embedding-0.6B and Qwen3-Reranker-0.6B with `airgap/bundle.sh fetch` (unpinned revisions are allowed by `hf_allow_unpinned` until `models.lock.yaml` is pinned) and starts the compose profiles `qwen3-large embeddings reranker` with the `.env.example` defaults that fit 48 GB. Watch it: `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose ps` and `nvidia-smi`.
+1. The GPU host (spot; `-var gpu_market=on-demand` if spot capacity is short) fetches Qwen3.8-27B-FP8, Qwen3-Embedding-0.6B and Qwen3-Reranker-0.6B with `airgap/bundle.sh fetch` (unpinned revisions are allowed by `hf_allow_unpinned` until `models.lock.yaml` is pinned) and starts the compose profiles `qwen3-large embeddings reranker` with the `.env.example` defaults that fit 48 GB (vLLM 0.30 needs `QWEN3_LARGE_MAX_NUM_SEQS=32` and `QWEN3_LARGE_GPU_UTIL=0.82` there; see the comment in `docker-compose.yml`). Loading the 29 GB of weights from the gp3 volume takes about 4 minutes per vLLM start. Watch it: `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose ps` and `nvidia-smi`.
 2. The gateway's providers point at the GPU host (`gateway_use_gpu_models`). Check from the loadgen:
 
    ```bash
@@ -346,7 +355,7 @@ tofu apply -var gpu_enabled=true \
      -d '{"model":"Qwen/Qwen3-Embedding-0.6B","input":"hello"}' | jq '.data[0].embedding | length'   # 1024
    ```
 
-3. Semantic cache and intent classifier against the real embedder: build the gateway from the feature branch (`core_ref`), enable the feature in the config as that branch documents, and send paraphrased prompts through `http://$GATEWAY_IP:8080/v1/chat/completions`. Measure the hit rate, the added latency of the embedding call (TEI on the L40S) and the false-hit rate on near-miss prompts.
+3. Semantic cache and intent classifier against the real embedder. `[cache]` always comes from the file (Postgres only holds tenants, models and routes), so on the gateway append a `[cache.semantic]` table (`enabled = true`, `store = "qdrant"`, `embedding_model = "local/qwen3-embedding-0.6b"`) to `/opt/caliban-testbed/caliban.toml` and recreate the service: `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-gateway.yml up -d --force-recreate --wait caliban`. Then create a tenant with `"semantic_cache": "on"` (`POST /api/v1/tenants`), give it a key and a route, and send paraphrased and near-miss prompts with `temperature` at most 0.3 through `http://$GATEWAY_IP:8080/v1/chat/completions` (`x-caliban-cache-tier: semantic` marks a hit). For the intent classifier, run core's `knn_eval` test on the loadgen with `CALIBAN_KNN_EVAL_URL=http://$GPU_IP:8001/v1 CALIBAN_KNN_EVAL_MODEL=Qwen/Qwen3-Embedding-0.6B`.
 4. vLLM throughput, inside the vLLM container on the GPU host (random dataset, no download):
 
    ```bash
@@ -442,6 +451,8 @@ Accepted scanner findings are annotated in place with `trivy:ignore` and `checko
 
 - The first `tofu plan` reads AWS (AZ offerings, AMI parameters, account id). There is no other way to resolve them; `tofu test` covers the logic offline.
 - The DLAMI public parameter path and the Docker plugin versions (`compose_version`, `buildx_version`) are defaults to check against the current releases.
-- Spot capacity for g6e in Frankfurt can be short; switch `gpu_market` to `on-demand` and re-apply.
+- Spot capacity for g6e in Frankfurt can be short, and it is per AZ: the module picks the first AZ that offers the types, not one with spot capacity. The provider keeps retrying `InsufficientInstanceCapacity` until its create timeout. The error message (CloudTrail `RunInstances`) names the AZs that have capacity; set `availability_zone` to one of them (it moves every host), or switch `gpu_market` to `on-demand`.
+- An instance can come up without its SSM agent registered (seen once on the first apply, when the instance profile was not yet visible to EC2). If a host does not appear in `aws ssm describe-instance-information` a few minutes after boot, reboot it.
+- `tofu test` reads `terraform.tfvars` from the module directory, so local values (for example `gpu_enabled = true`) make some offline tests fail. Run the tests from a copy without it, or move it aside.
 - The bench crate and the semantic cache, intent kNN and Valkey quota features live on core branches; the runbooks pick them with `bench_ref` and `core_ref`.
 - DNS resolution is not blocked in the isolated subnet (see the reachability table).
