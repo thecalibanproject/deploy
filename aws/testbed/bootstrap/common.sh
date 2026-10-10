@@ -261,7 +261,8 @@ write_profile() {
   cat > /etc/profile.d/caliban-testbed.sh <<EOF
 export AWS_DEFAULT_REGION=$REGION
 export CALIBAN_TESTBED_BUCKET=$BUCKET
-export GATEWAY_IP=$GATEWAY_IP GPU_IP=$GPU_IP LOADGEN_IP=$LOADGEN_IP ROUTER_IPS="$ROUTER_IPS"
+# Planned peer addresses (set even when that host is not enabled). Router N: tofu output hosts.
+export GATEWAY_IP=$GATEWAY_IP GPU_IP=$GPU_IP LOADGEN_IP=$LOADGEN_IP
 export CALIBAN_DEPLOY_DIR=$DEPLOY_DIR
 EOF
 }

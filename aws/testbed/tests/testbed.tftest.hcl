@@ -169,6 +169,36 @@ run "signed_bundle_needs_pubkey" {
   expect_failures = [aws_instance.host]
 }
 
+run "router_needs_gateway" {
+  command = plan
+
+  variables {
+    gateway_enabled = false
+    router_count    = 1
+  }
+
+  expect_failures = [aws_instance.host]
+}
+
+run "peer_addresses_do_not_depend_on_other_hosts" {
+  command = plan
+
+  variables {
+    router_count = 2
+    gpu_enabled  = false
+  }
+
+  # Planned addresses only: adding or removing a host must not change another host's user data.
+  assert {
+    condition     = local.host_env["loadgen"].GATEWAY_IP == "10.42.0.10" && local.host_env["loadgen"].GPU_IP == "10.42.0.20"
+    error_message = "peer addresses must be rendered whether or not the peer is enabled"
+  }
+  assert {
+    condition     = !contains(keys(local.host_env["loadgen"]), "ROUTER_IPS")
+    error_message = "the router list must not be in user data (it replaced every host when router_count changed)"
+  }
+}
+
 run "x86_hosts" {
   command = plan
 

@@ -6,8 +6,6 @@ set -euo pipefail
 . /opt/caliban-testbed/common.sh
 start_log
 
-[ -n "$GATEWAY_IP" ] || die "routers need the gateway host (gateway_enabled = true)"
-
 install_ttl_timer
 install_docker
 fetch_caliban
@@ -18,7 +16,8 @@ CALIBAN_SNAPSHOT_PUBLIC_KEY=$(snapshot_pub_b64)
 CALIBAN_ROUTER_TOKEN=$(param router-token)
 CALIBAN_KEK=$(param kek)
 CALIBAN_VALKEY_URL=redis://:$(param valkey-password)@$GATEWAY_IP:6379/0
-CALIBAN_QDRANT_URL=http://$GATEWAY_IP:6334
+# Qdrant REST port (6334 is gRPC, which Caliban does not use).
+CALIBAN_QDRANT_URL=http://$GATEWAY_IP:6333
 CALIBAN_LOG=info
 # Nagle plus delayed ACK added 24 to 50 ms to the first streamed token on Linux.
 CALIBAN_TCP_NODELAY=1

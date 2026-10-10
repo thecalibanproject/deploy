@@ -39,7 +39,9 @@ RS
   mkdir -p "$SRC"
   if git ls-remote --exit-code --heads "https://github.com/$GITHUB_ORG/core" "$BENCH_REF" >/dev/null 2>&1; then
     clone core "$BENCH_REF"
-    if (cd "$SRC/core" && cargo metadata --no-deps --format-version 1 | grep -q "\"name\":\"$BENCH_PACKAGE\""); then
+    # To a file, not `| grep -q`: under pipefail an early grep exit kills cargo with SIGPIPE.
+    (cd "$SRC/core" && cargo metadata --no-deps --format-version 1 > /tmp/core-metadata.json)
+    if grep -q "\"name\":\"$BENCH_PACKAGE\"" /tmp/core-metadata.json; then
       (cd "$SRC/core" && cargo build --release --locked -p "$BENCH_PACKAGE")
       for b in "$SRC/core/target/release/$BENCH_PACKAGE" "$SRC/core/target/release/caliban-bench"; do
         if [ -x "$b" ]; then install -m 0755 "$b" /usr/local/bin/caliban-bench; break; fi

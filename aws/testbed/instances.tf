@@ -40,7 +40,6 @@ locals {
       GATEWAY_IP             = local.ip_of.gateway
       GPU_IP                 = local.ip_of.gpu
       LOADGEN_IP             = local.ip_of.loadgen
-      ROUTER_IPS             = join(" ", local.ip_of.routers)
       GATEWAY_USE_GPU_MODELS = tostring(var.gateway_use_gpu_models && var.gpu_enabled)
       GPU_PROFILES           = join(" ", var.gpu_compose_profiles)
       GPU_RUN_CALIBAN        = tostring(var.gpu_run_caliban)
@@ -74,7 +73,8 @@ locals {
             { path = "/opt/caliban-testbed/compose.testbed-gateway.yml", permissions = "0644", content = file("${local.bootstrap_dir}/compose.testbed-gateway.yml") },
             { path = "/opt/caliban-testbed/compose.testbed-models.yml", permissions = "0644", content = file("${local.bootstrap_dir}/compose.testbed-models.yml") },
           ],
-          var.bundle_pubkey == null ? [] : [
+          # Only on hosts that load a bundle, so setting the key does not replace the others.
+          var.bundle_pubkey == null || h.image_source != "s3" ? [] : [
             { path = "/etc/caliban-testbed/bundle.pub", permissions = "0644", content = var.bundle_pubkey },
           ],
         )
@@ -159,6 +159,10 @@ resource "aws_instance" "host" {
     precondition {
       condition     = !(each.value.tier == "private" && !var.enable_nat_gateway && each.value.image_source == "build")
       error_message = "${each.key}: image_source = \"build\" needs internet access. Use the public tier, enable_nat_gateway = true, or image_source = \"s3\"."
+    }
+    precondition {
+      condition     = each.value.role != "router" || var.gateway_enabled
+      error_message = "${each.key}: routers poll the gateway's control plane and use its Valkey; set gateway_enabled = true."
     }
     precondition {
       condition     = each.value.image_source != "s3" || var.bundle_verify == "none" || var.bundle_pubkey != null

@@ -13,9 +13,9 @@ locals {
   )
 }
 
-# Endpoint policies name principals "*" and narrow them with aws:PrincipalAccount.
+# The testbed bucket statement names principals "*" and narrows them with aws:PrincipalAccount.
 data "aws_iam_policy_document" "s3_endpoint" {
-  # checkov:skip=CKV_AWS_283: principal is narrowed to this account by the condition
+  # checkov:skip=CKV_AWS_283: the testbed bucket statement is narrowed to this account; the other allows only s3:GetObject on named AWS-owned buckets
   statement {
     sid = "TestbedBucket"
     principals {
@@ -31,19 +31,18 @@ data "aws_iam_policy_document" "s3_endpoint" {
     }
   }
 
+  # dnf and the SSM Agent updater read these AWS-owned buckets anonymously (unsigned requests carry
+  # no aws:PrincipalAccount), so this statement has no account condition: with one, every package
+  # download got 403 and isolated hosts could not install Docker. It only allows reading objects
+  # from the named buckets, which cannot carry data out.
   statement {
     sid = "AwsReadOnlyBuckets"
     principals {
-      type        = "AWS"
+      type        = "*"
       identifiers = ["*"]
     }
     actions   = ["s3:GetObject"]
     resources = [for b in local.s3_endpoint_aws_buckets : "arn:${data.aws_partition.current.partition}:s3:::${b}/*"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:PrincipalAccount"
-      values   = [data.aws_caller_identity.current.account_id]
-    }
   }
 }
 

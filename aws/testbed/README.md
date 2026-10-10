@@ -150,7 +150,7 @@ Always created (free or nearly free while idle): the VPC, its three subnets, rou
 | `image_source` | `build` | `build`: clone and build on the host; `s3`: load a bundle (forced for isolated hosts) |
 | `cpu_arch` | `arm64` | Graviton c8g; `x86_64` uses c7i |
 
-Other useful variables: `core_ref` (for example `feat/semantic-cache`), `web_ref`, `deploy_ref`, `caliban_version`, `gpu_compose_profiles`, `gpu_run_caliban`, `gateway_use_gpu_models`, `bench_ref`, `bench_package`, `ttl_hours`, `bucket_force_destroy`. See `variables.tf`.
+Other useful variables: `core_ref` (a branch or tag to build), `web_ref`, `deploy_ref`, `caliban_version`, `gpu_compose_profiles`, `gpu_run_caliban`, `gateway_use_gpu_models`, `bench_ref`, `bench_package`, `ttl_hours`, `bucket_force_destroy`. See `variables.tf`.
 
 **Why arm64 for the CPU hosts.** The Dockerfile's base images (`node:24-slim`, `rust:1-trixie`, `gcr.io/distroless/cc-debian13:nonroot`) are multi-arch, `build.sh` takes `--platform`, and the image already builds and runs on linux/arm64 with the `ner` feature (ONNX Runtime ships aarch64 binaries). Graviton is cheaper per vCPU. The GPU host is x86_64 regardless (g6e). Set `cpu_arch = "x86_64"` when one amd64 bundle should serve every host (scenario d with the GPU).
 
@@ -198,6 +198,8 @@ aws s3 cp dist/amd64/ "s3://$B/bundles/amd64/" --recursive --exclude '*' --inclu
 
 A local image store holds one platform per tag unless Docker uses the containerd image store, so build and bundle one architecture at a time (or use `cpu_arch = "x86_64"` and a single amd64 bundle). The GPU bundle is about 50 GB; S3 storage for it is about $1.20 a month.
 
+**Building the bundle on a testbed host instead** (no local Docker build, native amd64 on a c7i): apply with `cpu_arch = "x86_64"`, the gateway's tier set to `isolated` in `role_network_mode` and `gateway_enabled = false`, so only the connected loadgen starts. On it, install Docker and buildx, clone core, web and deploy side by side, run `images/build.sh` and `airgap/bundle.sh --profile none --platform linux/amd64 --sign minisign` with a key generated there (`minisign -G -W`). The instance role may only write under `results/`, so copy the bundle, `docker-compose` and `minisign` to `results/stage/...` from the host, then server-side into place with your own credentials (`aws s3 cp s3://$B/results/stage/bundles/amd64/caliban-bundle-0.1.0.tar s3://$B/bundles/amd64/`, and the same for `.tar.sha256`, `tools/amd64/docker-compose` and `tools/amd64/minisign`). Put the public key in `bundle_pubkey` and set `gateway_enabled = true`: the loadgen keeps running. The second AWS run (core `bench/RESULTS-aws-2026-10b.md`) did this: 2 min 46 s for the image, an 846 MB bundle.
+
 **Static tools for hosts without internet** go under `s3://<bucket>/tools/<arch>/` (`arm64` or `amd64`):
 
 | File | Needed when |
@@ -220,7 +222,7 @@ The isolated route table has the implicit VPC-local route and the S3 gateway end
 |---|---|---|
 | other hosts in the VPC | local route | security groups: service ports from the VPC CIDR |
 | `ssm`, `ssmmessages`, `ec2messages` in eu-central-1 | interface endpoints in the isolated subnet, private DNS | endpoint security group: 443 from the VPC |
-| S3 in eu-central-1 | gateway endpoint | endpoint policy, principals of this account only: the testbed bucket (get, put, list; puts still need `results_upload`), the Amazon Linux 2023 repository bucket `al2023-repos-eu-central-1-de612dc2` (read; turn off with `s3_endpoint_allow_al2023_repos = false`), and the SSM Agent update buckets `amazon-ssm-eu-central-1` and `amazon-ssm-packages-eu-central-1` (read). No other bucket. |
+| S3 in eu-central-1 | gateway endpoint | endpoint policy: the testbed bucket (get, put, list; principals of this account only; puts still need `results_upload`), and `s3:GetObject` only on the Amazon Linux 2023 repository bucket `al2023-repos-eu-central-1-de612dc2` (turn off with `s3_endpoint_allow_al2023_repos = false`) and the SSM Agent update buckets `amazon-ssm-eu-central-1` and `amazon-ssm-packages-eu-central-1`. dnf and the agent read those anonymously, so that statement has no account condition (an account condition made every package download fail with 403). No other bucket. |
 | Amazon DNS resolver (VPC base + 2, 169.254.169.253) | always on in a VPC | not filtered by security groups |
 | instance metadata (169.254.169.254) and Amazon Time Sync (169.254.169.123) | link-local | IMDSv2 only, hop limit 1 (containers cannot reach it) |
 
@@ -271,7 +273,11 @@ A stopped host still pays for its EBS volume (about $14 a month for the 150 GB G
 
 ## Scenario runbooks
 
-Shell variables used below: `P="--profile default --region eu-central-1"`. Run `tofu output` for ids and IPs. On the hosts, `/etc/profile.d/caliban-testbed.sh` exports `GATEWAY_IP`, `GPU_IP`, `LOADGEN_IP`, `ROUTER_IPS` and `CALIBAN_DEPLOY_DIR`.
+Shell variables used below: `P="--profile default --region eu-central-1"`. Run `tofu output` for ids and IPs. On the hosts, `/etc/profile.d/caliban-testbed.sh` exports `GATEWAY_IP`, `GPU_IP`, `LOADGEN_IP` (each role's planned address, set even when that host is not enabled) and `CALIBAN_DEPLOY_DIR`. Router N is at the router tier's `.40 + N - 1` (`tofu output hosts`).
+
+Host user data holds no other host's state, so adding or removing a host (routers, the gateway, the loadgen) leaves the others running. The exception is the GPU: the gateway's model URLs depend on `gpu_enabled`, so toggling it replaces the gateway. To pause the GPU and keep the gateway, stop the GPU instance with `aws ec2 stop-instances` instead.
+
+The scripts used for the measurement runs (real-model and `caliban/auto` benchmarks, semantic-cache pairs, billing, split-mode, single sign-on and console checks) are in core's `bench/scripts/`; they read these variables.
 
 Common steps on the loadgen (admin token from SSM, a tenant key minted through the admin API):
 
@@ -348,11 +354,12 @@ tofu apply                                   # defaults: gateway + loadgen, publ
 tofu apply -var router_count=4               # 32 standard vCPUs with gateway + loadgen
 ```
 
-1. The gateway runs `standalone` with `CALIBAN_SNAPSHOT_SIGNING_KEY` and `CALIBAN_ROUTER_TOKEN`, so it serves signed snapshots at `/api/v1/snapshot`. Each router polls it every 10 s and points `CALIBAN_VALKEY_URL` at the gateway's Valkey (`<gateway>:6379`). The Valkey quota store is on core's `feat/valkey-quotas` branch: set `core_ref = "feat/valkey-quotas"` to test it; `main` keeps quotas in memory per process.
+1. The gateway runs `standalone` with `CALIBAN_SNAPSHOT_SIGNING_KEY` and `CALIBAN_ROUTER_TOKEN`, so it serves signed snapshots at `/api/v1/snapshot`. Each router polls it every 10 s and points `CALIBAN_VALKEY_URL` at the gateway's Valkey (`<gateway>:6379`) and `CALIBAN_QDRANT_URL` at its Qdrant REST port (6333). The compose config sets `[limits] store = "valkey"`, so quotas and `Idempotency-Key` records are shared by the gateway and every router. Routers can be added to a running testbed (`router_count`); the other hosts are not replaced.
 2. Check every router: `curl -s http://<router ip>:8080/healthz`. On a router, `sudo docker logs caliban-router` shows the snapshot version it applied.
 3. Propagation: create a key or change a route on the gateway, then time how long until every router honours it (one poll interval, about 10 s).
 4. Fail-static: on the gateway, `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-gateway.yml stop caliban`; the routers keep serving. `sudo docker restart caliban-router` on a router while the control plane is down: it serves from `/var/lib/caliban/snapshot.json`.
-5. Load: run the same `oha` or bench command against each router IP at once and compare with (a). With the Valkey branch, set a tenant `requests_per_minute` and check that the limit holds across all routers together.
+5. Load: run the same `oha` or bench command against each router IP at once and compare with (a). For the shared quota, add `[limits.tenants.<tenant id>]` with `requests_per_minute` to `/opt/caliban-testbed/caliban.toml` on the gateway, recreate `caliban`, and send requests alternating between routers: the limit holds across all of them together. core `bench/scripts/split.py` automates this, `Idempotency-Key` across routers (replay, 409, 422), BYOK keys opened by every router, and fail-static.
+6. KEK rotation (core README, "KEK rotation"): routers read `/etc/caliban-testbed/router.env`, which has `CALIBAN_KEK` but no `CALIBAN_KEK_PREVIOUS`. On each router, edit that file (new `CALIBAN_KEK`, old key in `CALIBAN_KEK_PREVIOUS`) and recreate the container with the `docker run` line from `bootstrap/router.sh`; then the gateway's `compose/.env` and `docker compose ... up -d --force-recreate caliban`; then `docker compose exec caliban caliban keys rotate` and `keys status`. Keep the new key on the hosts (do not copy it through the bucket or SSM by hand). The snapshot version does not change on `keys rotate`, so check the routers by sending a BYOK request through each before removing `CALIBAN_KEK_PREVIOUS`.
 
 ### (c) GPU open-model tier
 
@@ -402,7 +409,7 @@ tofu apply -var network_mode=isolated -var enable_flow_logs=true \
 ```
 
 1. Every host is in the isolated subnet, with no public IP, and loads the Caliban image (and on the GPU host, vLLM, TEI and the weights) from the bucket with `load.sh`, which checks the signature and every file. Docker comes from the Amazon Linux 2023 repositories through the S3 endpoint; compose from `tools/<arch>/docker-compose`. The three SSM endpoints come up automatically.
-2. Check the install: on the gateway, `cd $CALIBAN_DEPLOY_DIR/compose && sudo ../scripts/smoke.sh` (health and admin API; add `MINT_KEY=1` and the GPU for a chat completion).
+2. Check the install: on the gateway, `cd $CALIBAN_DEPLOY_DIR/compose && sudo ../scripts/smoke.sh` (health and admin API). For a chat completion without the GPU, run `mock-upstream` (core bench) on the connected loadgen on a port the security group admits (8000-8003 or 9000-9001), register it as a provider and model through the admin API, route the default tenant to it, and run `sudo MINT_KEY=1 MODEL=<that model> ../scripts/smoke.sh`.
 3. Egress attempts must fail, from the host and from the containers:
 
    ```bash
@@ -415,19 +422,23 @@ tofu apply -var network_mode=isolated -var enable_flow_logs=true \
    aws s3 ls "s3://$CALIBAN_TESTBED_BUCKET/bundles/" && echo "testbed bucket reachable: expected"
    ```
 
-   The `curl` calls time out: there is no route, and the security group has no rule for them.
+   The `curl` calls time out: there is no route, and the security group has no rule for them. DNS still answers (see the reachability table).
 4. Flow logs (`tofu output network` gives the log group and the isolated subnet id). In CloudWatch Logs Insights on `/caliban-testbed/vpc-flow-logs`, after the tests above:
 
    ```
    parse @message "* * * * * * * * * * * * * * * * * * *" as version, eni, subnet, instance, src, dst, srcport, dstport, proto, packets, bytes, start, end, action, status, direction, path, pktsrc, pktdst
    | filter subnet = "<isolated subnet id>" and direction = "egress"
    | filter not isIpv4InSubnet(dst, "10.42.0.0/16")
-   | stats count(*) as flows, sum(bytes) as bytes by action, path, dst
+   | stats count(*) as flows, sum(bytes) as total_bytes by action, path, dst
    | sort flows desc
    ```
 
-   Expected: `ACCEPT` rows only with `path = 7` (S3 gateway endpoint), and `REJECT` rows for the `curl` attempts. No `ACCEPT` row may have `path = 8` (internet gateway). Traffic to the SSM endpoints stays inside the VPC CIDR and is filtered out by the second line.
+   Expected: `ACCEPT` rows only, all with `path = 7` (S3 gateway endpoint). No row may have `path = 8` (internet gateway); adding `| filter path != "7"` must return nothing. The blocked `curl` attempts do not appear at all (the security group denies them before they become flows), so the evidence is that absence plus the failed attempts in step 3. Traffic to the SSM endpoints stays inside the VPC CIDR and is filtered out by the second line. (Field aliases must not reuse a parsed name: `sum(bytes) as bytes` is rejected.)
 5. Turn flow logs and the GPU off again when done.
+
+### (e) Single sign-on with Dex on the gateway
+
+core `bench/scripts/sso_dex_testbed.sh`, run as root on the gateway, starts Dex (`ghcr.io/dexidp/dex:v2.43.1`, in-memory) on the gateway's private IP, port 8003 (admitted by the security group), with a `mock` connector (user "Kilgore Trout", group `authors`, mapped to owner) and a password user `viewer@example.com` (no groups), then sets the `CALIBAN_OIDC_*` variables in `compose/.env` and recreates `caliban`. Plain http: the control plane warns that tokens and cookies are not secure, which is expected here. From the loadgen, core `bench/scripts/sso_e2e.py` runs the login flow, CSRF and Origin checks, a viewer bound through the role-binding API, logout and the audit log; `bench/scripts/ui_login.py` signs in through the console in headless Chromium (the official Playwright container). The admin token keeps working as the break-glass credential, and every use of it is audited.
 
 ## Teardown checklist
 
@@ -477,5 +488,7 @@ Accepted scanner findings are annotated in place with `trivy:ignore` and `checko
 - Spot capacity for g6e in Frankfurt can be short, and it is per AZ: the module picks the first AZ that offers the types, not one with spot capacity. The provider keeps retrying `InsufficientInstanceCapacity` until its create timeout. The error message (CloudTrail `RunInstances`) names the AZs that have capacity; set `availability_zone` to one of them (it moves every host), or switch `gpu_market` to `on-demand`.
 - An instance can come up without its SSM agent registered (seen once on the first apply, when the instance profile was not yet visible to EC2). If a host does not appear in `aws ssm describe-instance-information` a few minutes after boot, reboot it.
 - `tofu test` reads `terraform.tfvars` from the module directory, so local values (for example `gpu_enabled = true`) make some offline tests fail. Run the tests from a copy without it, or move it aside.
-- The bench crate and the semantic cache, intent kNN and Valkey quota features live on core branches; the runbooks pick them with `bench_ref` and `core_ref`.
+- **vLLM start order on the 48 GB tier.** In the second run the 27B model profiled its memory while the reranker was still starting, got 1.2 GiB of KV cache (one 131072-token sequence needs 4.3 GiB) and crash-looped. Restarting it alone (`docker compose ... up -d --force-recreate qwen3-large`) once the embedder and reranker are healthy, with `QWEN3_LARGE_MAX_MODEL_LEN=32768` in `compose/.env`, gave 5.15 GiB. Check `docker compose ps` on the GPU host before measuring.
+- **Background processes and SSM Run Command.** A process started with `nohup ... &` inside an `aws ssm send-command` script is killed when the command ends or times out. Start long-running helpers (mock upstreams, load generators) with `setsid nohup ... &`.
+- **Ports between hosts.** The hosts security group admits 8080, 8081, 5432, 6379, 6333-6334, 8000-8003 and 9000-9001 inside the VPC; put extra services (a mock upstream, Dex for single sign-on) on one of those ports.
 - DNS resolution is not blocked in the isolated subnet (see the reachability table).

@@ -277,7 +277,7 @@ variable "github_org" {
 }
 
 variable "core_ref" {
-  description = "Branch or tag of core to build (e.g. feat/semantic-cache for scenario c)."
+  description = "Branch or tag of core to build."
   type        = string
   default     = "main"
 }

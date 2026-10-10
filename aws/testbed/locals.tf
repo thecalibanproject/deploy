@@ -90,11 +90,13 @@ locals {
     }
   }
 
+  # Planned address of each peer role, whether or not that host is enabled. Only these go into
+  # user data: rendering just the enabled peers (and the router list) changed every host's user
+  # data, and so replaced every host, whenever another host was added or removed.
   ip_of = {
-    gateway = var.gateway_enabled ? cidrhost(local.subnet_cidrs[local.role_tier.gateway], local.host_index.gateway) : ""
-    gpu     = var.gpu_enabled ? cidrhost(local.subnet_cidrs[local.role_tier.gpu], local.host_index.gpu) : ""
-    loadgen = var.loadgen_enabled ? cidrhost(local.subnet_cidrs[local.role_tier.loadgen], local.host_index.loadgen) : ""
-    routers = [for k, h in local.hosts : h.ip if h.role == "router"]
+    gateway = cidrhost(local.subnet_cidrs[local.role_tier.gateway], local.host_index.gateway)
+    gpu     = cidrhost(local.subnet_cidrs[local.role_tier.gpu], local.host_index.gpu)
+    loadgen = cidrhost(local.subnet_cidrs[local.role_tier.loadgen], local.host_index.loadgen)
   }
 
   any_offline_host = anytrue([for h in values(local.hosts) : !h.connected])
