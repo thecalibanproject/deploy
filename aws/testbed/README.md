@@ -152,7 +152,7 @@ Always created (free or nearly free while idle): the VPC, its three subnets, rou
 
 Other useful variables: `core_ref` (a branch or tag to build), `web_ref`, `deploy_ref`, `caliban_version`, `gpu_compose_profiles`, `gpu_run_caliban`, `gateway_use_gpu_models`, `bench_ref`, `bench_package`, `ttl_hours`, `bucket_force_destroy`. See `variables.tf`.
 
-**Why arm64 for the CPU hosts.** The Dockerfile's base images (`node:24-slim`, `rust:1-trixie`, `gcr.io/distroless/cc-debian13:nonroot`) are multi-arch, `build.sh` takes `--platform`, and the image already builds and runs on linux/arm64 with the `ner` feature (ONNX Runtime ships aarch64 binaries). Graviton is cheaper per vCPU. The GPU host is x86_64 regardless (g6e). Set `cpu_arch = "x86_64"` when one amd64 bundle should serve every host (scenario d with the GPU).
+**Why arm64 for the CPU hosts.** The Dockerfile's base images (`node:24-slim`, `rust:1-trixie`, `gcr.io/distroless/cc-debian13:nonroot`) are multi-arch, `build.sh` takes `--platform`, and the image already builds and runs on linux/arm64 with the `ner` feature (ONNX Runtime ships aarch64 binaries). Graviton is cheaper per vCPU, but the int8 PII NER model runs 1.8 times slower on it than on x86 with AVX-512 VNNI, so use x86 for NER work. The GPU host is x86_64 regardless (g6e). Set `cpu_arch = "x86_64"` when one amd64 bundle should serve every host (scenario d with the GPU).
 
 ## What runs on each host
 
@@ -167,7 +167,7 @@ Other useful variables: `core_ref` (a branch or tag to build), `web_ref`, `deplo
 
 `compose.testbed-models.yml` publishes the model servers on the GPU host's private IP through a bridge with masquerading off, so they still have no route out.
 
-The PII NER model is off in the testbed (`CALIBAN_PII_NER_DIR` empty). To test it, fetch the artifact with the ml repo's `scripts/fetch_pii_ner.py`, upload it, copy it to `/srv/caliban/models/pii` and set the variable in `compose/.env`.
+The PII NER model is off in the testbed (`CALIBAN_PII_NER_DIR` empty). To test it, fetch the artifact with the ml repo's `scripts/fetch_pii_ner.py`, upload it, copy it to `/srv/caliban/models/pii` and set the variable in `compose/.env`. Measure NER on `cpu_arch = "x86_64"`: the second run had 43 ms per call on c7i against 77 ms on Graviton4, and 29.7 ms (103 req/s) with 2 threads per session (core `bench/RESULTS-aws-2026-10b.md`).
 
 ## Images, bundles and tools in the bucket
 
@@ -376,7 +376,7 @@ tofu apply -var gpu_enabled=true              # the semantic cache and intent kN
      -d '{"model":"Qwen/Qwen3-Embedding-0.6B","input":"hello"}' | jq '.data[0].embedding | length'   # 1024
    ```
 
-3. Semantic cache and intent classifier against the real embedder. `[cache]` and `[routing]` always come from the file (Postgres only holds tenants, models and routes). `/opt/caliban-testbed/caliban.toml` is a copy of `compose/config/caliban.toml`, which already carries the calibrated values for Qwen3-Embedding-0.6B: a `[cache.semantic]` table (`store = "qdrant"`, `min_threshold = 0.93`) with `enabled = false`, and a commented-out `[routing]` table (`query_prefix`, `temperature = 0.1`, `abstain_threshold = 0.6`, `oos_threshold = 0.64`; the `\n` in `query_prefix` is a TOML escape for the newline the Qwen3 instruction format needs). On the gateway, turn both on and recreate the service:
+3. Semantic cache and intent classifier against the real embedder. `[cache]` and `[routing]` always come from the file (Postgres only holds tenants, models and routes). `/opt/caliban-testbed/caliban.toml` is a copy of `compose/config/caliban.toml`, which carries a `[cache.semantic]` table (`store = "qdrant"`, `enabled = false`; the thresholds and the cache `query_prefix` are core's defaults, calibrated for Qwen3-Embedding-0.6B) and a commented-out `[routing]` table (`query_prefix`, `temperature = 0.1`, `abstain_threshold = 0.6`, `oos_threshold = 0.64`; the `\n` in `query_prefix` is a TOML escape for the newline the Qwen3 instruction format needs). On the gateway, turn both on and recreate the service:
 
    ```bash
    TOML=/opt/caliban-testbed/caliban.toml

@@ -65,15 +65,16 @@ exact_ttl_secs = 3600
 # T2 semantic cache (Qdrant; CALIBAN_QDRANT_URL wins over qdrant_url). Off unless enabled here
 # AND `semantic_cache = "on"` on the tenant. Needs the embeddings profile, ideally on a GPU: on CPU,
 # Qwen3-Embedding-0.6B takes about 275 ms per prompt, far over the 50 ms lookup budget.
-# min_threshold = 0.93 is calibrated for Qwen3-Embedding-0.6B: below it the false-hit rate on
-# near-miss prompts doubles (core bench/RESULTS-aws-2026-10.md).
+# threshold, min_threshold and query_prefix are left to core's defaults, which are calibrated for
+# Qwen3-Embedding-0.6B and move with the image (the instruction prefix on, threshold and
+# min_threshold 0.91: 67% of paraphrases hit with no false hit on near-miss prompts, core
+# bench/RESULTS-aws-2026-10b.md). Set them here only for another embedding model, and then set
+# all three together: the thresholds only hold for the prefix they were measured with.
 [cache.semantic]
 enabled = false
 store = "qdrant"
 qdrant_url = "http://qdrant:6333"
 embedding_model = "local/qwen3-embedding-0.6b"
-threshold = 0.95
-min_threshold = 0.93
 max_error_rate = 0.02
 ttl_secs = 86400
 lookup_budget_ms = 50

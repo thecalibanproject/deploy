@@ -134,7 +134,12 @@ services:
       # L1 PII NER model (names, organisations, places). Point at a verified artifact inside the
       # mounted /models/pii (e.g. /models/pii/nym-pii-multilingual-small-int8/3.0.0); empty = off.
       CALIBAN_PII_NER_DIR: ${CALIBAN_PII_NER_DIR:-}
-      CALIBAN_PII_NER_SESSIONS: ${CALIBAN_PII_NER_SESSIONS:-2}
+      # NER sessions and ONNX Runtime threads per session. Empty = core's defaults (sessions
+      # from the core count, 2 threads each: 4 x 2 was the fastest setting on 8 x86 vCPU, core
+      # bench/RESULTS-aws-2026-10b.md). Core derives the threads from the sessions when only
+      # the sessions are set, so set both or neither. Heavy NER: prefer x86 hosts (README).
+      CALIBAN_PII_NER_SESSIONS: ${CALIBAN_PII_NER_SESSIONS:-}
+      CALIBAN_PII_NER_THREADS: ${CALIBAN_PII_NER_THREADS:-}
       # TCP_NODELAY on accepted connections, on by default: on Linux, Nagle plus delayed ACK added
       # 24 to 50 ms to the first streamed token (core bench/RESULTS-aws-2026-10.md). 0 = off.
       CALIBAN_TCP_NODELAY: ${CALIBAN_TCP_NODELAY:-1}

@@ -287,3 +287,13 @@ namespace, labelled e.g. `kubernetes.io/metadata.name: llm`. Then:
 
 On air-gapped clusters, give the engine `HF_HUB_OFFLINE=1`, a pre-filled model volume and
 (for gpt-oss) `TIKTOKEN_ENCODINGS_BASE`.
+
+## PII NER
+
+The L1 NER detector runs in the pods that serve traffic (router, or standalone). In the second
+AWS run it was 1.8 times faster per call on x86 with AVX-512 VNNI than on Graviton4 (43 ms
+against 77 ms; 29.7 ms and 103 req/s on 8 vCPU with 2 threads per session, core
+`bench/RESULTS-aws-2026-10b.md`), so pin those pods to amd64 nodes for NER-heavy tenants
+(`router.nodeSelector: { kubernetes.io/arch: amd64 }`). The chart sets no `CALIBAN_PII_NER_*`
+variables, so core's defaults apply; to override them, set both `CALIBAN_PII_NER_SESSIONS` and
+`CALIBAN_PII_NER_THREADS` in `router.extraEnv`.

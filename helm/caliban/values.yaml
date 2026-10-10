@@ -198,15 +198,15 @@ config:
     exact_max_entries: 100000
     exact_ttl_secs: 3600
     # T2 semantic cache (Qdrant at CALIBAN_QDRANT_URL). Off unless enabled here AND
-    # semantic_cache = "on" on the tenant. min_threshold 0.93 is calibrated for
-    # Qwen3-Embedding-0.6B: below it the false-hit rate on near-miss prompts doubles
-    # (core bench/RESULTS-aws-2026-10.md).
+    # semantic_cache = "on" on the tenant. threshold, min_threshold and query_prefix are left to
+    # core's defaults, calibrated for Qwen3-Embedding-0.6B (the instruction prefix on, both
+    # thresholds 0.91: 67% of paraphrases hit with no false hit on near-miss prompts, core
+    # bench/RESULTS-aws-2026-10b.md). Set them only for another embedding model, all three
+    # together.
     semantic:
       enabled: false
       store: qdrant
       embedding_model: local/qwen3-embedding-0.6b
-      threshold: 0.95
-      min_threshold: 0.93
       max_error_rate: 0.02
       ttl_secs: 86400
       lookup_budget_ms: 50
