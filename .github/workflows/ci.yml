@@ -130,6 +130,21 @@ jobs:
               || { echo "::error::compose config with byok-egress failed (profile '$p')"; fail=1; }
           done
           exit "$fail"
+      - name: GPU chat pools start after embed and rerank are healthy
+        run: |
+          cfg=$(docker compose -f compose/docker-compose.yml --profile qwen3-large \
+            --profile embeddings --profile reranker config --format json)
+          for dep in embed rerank; do
+            c=$(jq -r --arg d "$dep" '.services["qwen3-large"].depends_on[$d].condition' <<<"$cfg")
+            [ "$c" = service_healthy ] || { echo "::error::qwen3-large must wait for $dep (got $c)"; exit 1; }
+            jq -e --arg d "$dep" '.services[$d].healthcheck.test | length > 0' <<<"$cfg" > /dev/null \
+              || { echo "::error::$dep needs a healthcheck"; exit 1; }
+          done
+          # 48 GB defaults (core bench/RESULTS-aws-2026-10b.md).
+          for want in --max-model-len=32768 --gpu-memory-utilization=0.82; do
+            jq -e --arg w "$want" '.services["qwen3-large"].command | index($w)' <<<"$cfg" > /dev/null \
+              || { echo "::error::qwen3-large should default to $want"; exit 1; }
+          done
 
   shell:
     name: Shellcheck and Dockerfile check

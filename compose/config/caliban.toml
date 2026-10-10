@@ -222,8 +222,9 @@ kind = "chat"
 family = "qwen3.8"
 trust_tier = "t0_sovereign"
 licence = "apache-2.0"
-# Native 262144 (YaRN to 1M). 131072 fits 1×48 GB with fp8 KV; use 262144 on 1×80 GB.
-context_window = 131072
+# Native 262144 (YaRN to 1M). Served at 32768 on 1×48 GB next to embed and rerank
+# (QWEN3_LARGE_MAX_MODEL_LEN); on 1×80 GB raise both to 131072 or 262144.
+context_window = 32768
 price_in_per_mtok = 0.0
 price_out_per_mtok = 0.0
 [models.capabilities]

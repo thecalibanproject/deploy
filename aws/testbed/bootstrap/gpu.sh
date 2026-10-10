@@ -51,8 +51,13 @@ if [ "$GPU_RUN_CALIBAN" != true ]; then
   done < <(docker compose "${files[@]}" "${profile_args[@]}" config --services)
 fi
 
-# vLLM needs a few minutes to load 31 GB of weights; do not block cloud-init on it.
-docker compose "${files[@]}" "${profile_args[@]}" up -d "${services[@]}"
+# Compose starts the vLLM chat pool only once embed and rerank report healthy (depends_on in
+# docker-compose.yml), so its memory profile sees them loaded; `up -d` waits for those two
+# (a minute or two) but not for vLLM, which needs a few more to load 31 GB of weights. If one
+# of them never gets healthy, say so and carry on, so the host is still marked ready to debug.
+if ! docker compose "${files[@]}" "${profile_args[@]}" up -d "${services[@]}"; then
+  log "error: a model server did not become healthy; the chat pool was not started (docker compose logs embed rerank)"
+fi
 docker compose "${files[@]}" "${profile_args[@]}" ps
 log "model servers starting; watch with: cd $DEPLOY_DIR/compose && sudo docker compose ps"
 mark_ready
