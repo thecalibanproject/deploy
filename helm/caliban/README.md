@@ -30,6 +30,7 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `router.snapshot.controlPlaneUrl` | `""` | Defaults to `http://<release>-control-plane:<controlPlane.service.port>`. |
 | `router.snapshot.pollIntervalSeconds` | `10` | `CALIBAN_SNAPSHOT_POLL_SECS`; core adds ±20% jitter. |
 | `router.snapshot.cache.enabled` | `true` | Keeps the last good signed snapshot in an `emptyDir` (`CALIBAN_SNAPSHOT_CACHE`). |
+| `usageSpool.enabled` / `usageSpool.sizeLimit` | `true` / `512Mi` | Undelivered usage events of snapshot routers and standalone, in an `emptyDir` (`CALIBAN_USAGE_SPOOL_DIR`). See [Split mode](#split-mode-routers-and-the-control-plane). Off: they wait in memory and are lost when the container stops. |
 | `snapshotKeys.existingSecret` | `caliban-snapshot` | Keys `signing-key`, `public-key`, `router-token`. Needed only with `router.mode=snapshot`. `snapshotKeys.create=true` is for dev only. |
 | `snapshotKeys.routerExistingSecret` | `""` | Optional Secret with only `public-key` and `router-token`, read by the routers instead. |
 | `global.imageRegistry` | `""` | Private mirror for every image. The repository path is kept. |
@@ -73,6 +74,20 @@ traffic. `router.mode` decides how the routers get their config.
   and re-verified on load, so a router container that restarts while the control plane is
   down still serves. A new pod has no cache: it waits for the control plane before it
   listens, and its startup probe fails if that takes longer than the probe budget.
+- **Router id.** Each router checks in with `CALIBAN_ROUTER_ID`, which the chart sets to the
+  pod name (downward API). The control plane records it for `caliban keys status`.
+- **Usage shipping.** Routers send their usage events to the control plane
+  (`POST /api/v1/usage/ingest`, router token), so `GET /api/v1/usage` and billing cover all
+  router traffic. While the control plane is down, or refuses them (an older control plane
+  answers 404), events wait in a spool at `/var/lib/caliban/usage/spool`
+  (`CALIBAN_USAGE_SPOOL_DIR`, an `emptyDir` of `usageSpool.sizeLimit`) and are delivered once
+  it answers; the control plane counts each event once. The `emptyDir` survives container
+  restarts, not the pod: a pod deleted while the control plane is unreachable loses what is
+  still spooled after its 5 s shutdown flush, so do not scale down or roll routers during a
+  control-plane outage. Routers stay a Deployment rather than a StatefulSet with a PVC per
+  pod: that would make rollouts serial, pin each router to its volume's zone, and still strand
+  the spool of a pod removed by an HPA scale-down. Standalone gets the same spool for its
+  shipping to Postgres.
 
 Where the keys go:
 

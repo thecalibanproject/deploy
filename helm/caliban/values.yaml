@@ -166,6 +166,26 @@ log: info
 # 24 to 50 ms to the first streamed token (core bench/RESULTS-aws-2026-10.md).
 tcpNodelay: true
 
+# Usage events not yet delivered (core README, "Usage shipping"). Split-mode routers ship their
+# events to the control plane and standalone ships to its own Postgres; while the receiver is
+# down or refuses them (an older control plane answers 404), events wait in this spool
+# (CALIBAN_USAGE_SPOOL_DIR, one 0600 JSONL file per batch) and are sent, oldest first, once it
+# answers. Without it they wait in memory and are lost when the container stops.
+#
+# The spool is an emptyDir: it survives container restarts (crash, OOM kill, liveness restart)
+# but not the pod. On SIGTERM a router sends what it has for up to 5 s; what is still spooled
+# when a pod is deleted while the control plane is unreachable is lost. Routers stay a
+# Deployment on purpose: a StatefulSet with a PVC per pod would keep the spool across
+# replacement, but would also make rollouts serial, tie each router to its volume's zone, and
+# leave the spool of a pod removed by an HPA scale-down undelivered until that ordinal
+# returns. So do not scale down or roll routers while the control plane is down.
+# Core keeps at most CALIBAN_USAGE_SPOOL_MAX events (default 100,000; set it in
+# router.extraEnv). Keep sizeLimit well above that many events (estimate 1 to 2 KB each):
+# beyond sizeLimit the kubelet evicts the pod, and with it the spool.
+usageSpool:
+  enabled: true
+  sizeLimit: 512Mi
+
 # Telemetry is OFF unless an endpoint is set. Point it at YOUR collector only.
 otel:
   endpoint: ""

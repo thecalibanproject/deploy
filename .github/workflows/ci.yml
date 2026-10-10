@@ -105,6 +105,24 @@ jobs:
               echo "::error::waitFor $bad should fail the render"; exit 1
             fi
           done
+      - name: Routers get a stable id and a usage spool; standalone gets the spool
+        run: |
+          has() { grep -qF -- "$2" <<<"$1" || { echo "::error::missing '$2' ($3)"; exit 1; }; }
+          out=$(helm template caliban helm/caliban)
+          has "$out" 'name: CALIBAN_ROUTER_ID' split
+          has "$out" 'fieldPath: metadata.name' split
+          has "$out" 'value: /var/lib/caliban/usage/spool' split
+          has "$out" 'mountPath: /var/lib/caliban/usage' split
+          out=$(helm template caliban helm/caliban --set mode=standalone)
+          has "$out" 'value: /var/lib/caliban/usage/spool' standalone
+          if grep -qF 'CALIBAN_ROUTER_ID' <<<"$out"; then echo "::error::standalone is no router"; exit 1; fi
+          # Static routers neither poll nor ship.
+          out=$(helm template caliban helm/caliban --set router.mode=static)
+          if grep -qE 'CALIBAN_ROUTER_ID|CALIBAN_USAGE_SPOOL_DIR' <<<"$out"; then
+            echo "::error::static routers do not ship usage"; exit 1
+          fi
+          out=$(helm template caliban helm/caliban --set usageSpool.enabled=false)
+          if grep -qF 'CALIBAN_USAGE_SPOOL_DIR' <<<"$out"; then echo "::error::usageSpool.enabled=false"; exit 1; fi
 
   compose:
     name: Compose config

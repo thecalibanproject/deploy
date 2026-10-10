@@ -21,6 +21,11 @@ CALIBAN_QDRANT_URL=http://$GATEWAY_IP:6333
 CALIBAN_LOG=info
 # Nagle plus delayed ACK added 24 to 50 ms to the first streamed token on Linux.
 CALIBAN_TCP_NODELAY=1
+# Check-in id for the control plane: the testbed host key (router-1, ...), not the container's
+# random host name, so it stays the same when the container is recreated.
+CALIBAN_ROUTER_ID=$HOST_KEY
+# Usage events the control plane has not acknowledged, on the host disk (survives the container).
+CALIBAN_USAGE_SPOOL_DIR=/var/lib/caliban/usage-spool
 ENV
 umask 022
 

@@ -281,6 +281,8 @@ app.kubernetes.io/component: {{ .component }}
 {{- $snapCP := and (eq $c "control-plane") $snapshot -}}
 {{- $useConfig := not $snapRouter -}}
 {{- $snapCache := and $snapRouter $root.Values.router.snapshot.cache.enabled -}}
+{{- /* Usage shipping: snapshot routers send to the control plane, standalone to its Postgres. */ -}}
+{{- $spool := and $root.Values.usageSpool.enabled (or $snapRouter (eq $c "standalone")) -}}
 {{- if $snapRouter -}}
 {{- $poll := int $root.Values.router.snapshot.pollIntervalSeconds -}}
 {{- if lt $poll 1 -}}{{- fail "router.snapshot.pollIntervalSeconds must be >= 1" -}}{{- end -}}
@@ -431,6 +433,16 @@ spec:
             - name: CALIBAN_SNAPSHOT_CACHE
               value: /var/lib/caliban/snapshot.json
             {{- end }}
+            # Stable id for check-ins (router_status, `caliban keys status`): the pod name.
+            - name: CALIBAN_ROUTER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- end }}
+            {{- if $spool }}
+            # Undelivered usage events (usageSpool). A subdirectory, so core can make it 0700.
+            - name: CALIBAN_USAGE_SPOOL_DIR
+              value: /var/lib/caliban/usage/spool
             {{- end }}
             - name: CALIBAN_QDRANT_URL
               value: {{ $root.Values.qdrant.url | quote }}
@@ -496,6 +508,10 @@ spec:
             - name: snapshot-cache
               mountPath: /var/lib/caliban
             {{- end }}
+            {{- if $spool }}
+            - name: usage-spool
+              mountPath: /var/lib/caliban/usage
+            {{- end }}
             {{- with $root.Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -518,6 +534,13 @@ spec:
         - name: snapshot-cache
           emptyDir:
             sizeLimit: {{ $root.Values.router.snapshot.cache.sizeLimit }}
+        {{- end }}
+        {{- if $spool }}
+        # Usage events not yet delivered: survives container restarts, not the pod (see
+        # usageSpool in values.yaml for why routers are not a StatefulSet).
+        - name: usage-spool
+          emptyDir:
+            sizeLimit: {{ $root.Values.usageSpool.sizeLimit }}
         {{- end }}
         {{- with $root.Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
