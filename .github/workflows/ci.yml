@@ -26,6 +26,55 @@ jobs:
       - run: helm template caliban helm/caliban > /dev/null
       - run: helm template caliban helm/caliban --set router.mode=static > /dev/null
       - run: helm template caliban helm/caliban -f helm/caliban/values-airgap.yaml > /dev/null
+      - name: Single sign-on renders into caliban.toml, the env and the NetworkPolicy
+        run: |
+          cat > /tmp/sso.yaml <<'EOF'
+          sso:
+            enabled: true
+            issuer: https://keycloak.example.internal/realms/caliban
+            clientId: caliban-console
+            redirectUrl: https://caliban.example.internal/auth/callback
+            apiAudience: caliban-api
+            sessionIdleSeconds: 1800
+            breakGlass: false
+            roleMappings:
+              - { group: caliban-owners, role: owner }
+              - { group: acme-developers, role: developer, tenant: acme }
+          networkPolicy:
+            egress:
+              identityProvider:
+                - to: [{ ipBlock: { cidr: 10.20.0.15/32 } }]
+                  ports: [{ port: 443, protocol: TCP }]
+          EOF
+          helm lint --strict helm/caliban -f /tmp/sso.yaml
+          for extra in "" "--set mode=standalone"; do
+            out=$(helm template caliban helm/caliban -f /tmp/sso.yaml $extra)
+            for want in '[security.oidc]' '[[security.oidc.role_mappings]]' 'tenant = "acme"' \
+                'client_secret = { env = "CALIBAN_OIDC_CLIENT_SECRET" }' 'break_glass = false' \
+                'session_idle_secs = 1800' 'name: CALIBAN_OIDC_CLIENT_SECRET' \
+                'key: oidc-client-secret' 'egress-identity-provider'; do
+              grep -qF -- "$want" <<<"$out" || { echo "::error::missing '$want' ($extra)"; exit 1; }
+            done
+          done
+      - name: Single sign-on settings core would refuse fail at render time
+        run: |
+          base=(--set sso.enabled=true --set sso.issuer=https://i --set sso.clientId=c
+                --set sso.redirectUrl=https://c/auth/callback)
+          refused() {
+            if helm template caliban helm/caliban "$@" > /dev/null 2>&1; then
+              echo "::error::helm template should have failed: $*"; exit 1
+            fi
+          }
+          refused --set sso.breakGlass=false                         # nobody could sign in
+          refused --set sso.enabled=true                             # no issuer, client id, redirect URL
+          refused "${base[@]}" --set 'sso.roleMappings[0].group=g' \
+            --set 'sso.roleMappings[0].role=developer'               # tenant role without a tenant
+          refused "${base[@]}" --set 'sso.roleMappings[0].group=g' \
+            --set 'sso.roleMappings[0].role=owner' --set 'sso.roleMappings[0].tenant=acme'
+          refused "${base[@]}" --set 'sso.roleMappings[0].group=g' --set 'sso.roleMappings[0].role=root'
+          refused "${base[@]}" --set config.security.oidc.issuer=https://i   # configured twice
+          # A base that renders, so the failures above are the checks, not the base.
+          helm template caliban helm/caliban "${base[@]}" > /dev/null
 
   compose:
     name: Compose config
