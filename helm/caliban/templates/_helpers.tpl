@@ -190,9 +190,60 @@ app.kubernetes.io/part-of: caliban
 {{- end -}}
 {{- end -}}
 
+{{/*
+  .Values.config, with .Values.sso merged into [security]: [security.oidc] (key names as in
+  core's OidcConfig) and, with sso.breakGlass=false, `break_glass = false`. Fails early on
+  settings the control plane would refuse at start.
+*/}}
 {{- define "caliban.toml" -}}
-# Rendered by the caliban Helm chart from .Values.config. Do not edit in-cluster.
-{{- include "caliban.toml.table" (dict "prefix" "" "data" .Values.config) }}
+{{- $cfg := deepCopy .Values.config -}}
+{{- $sso := .Values.sso -}}
+{{- $noBreakGlass := eq (toString $sso.breakGlass) "false" -}}
+{{- if $sso.enabled -}}
+{{- $sec := dict -}}
+{{- if hasKey $cfg "security" -}}{{- $sec = index $cfg "security" -}}{{- end -}}
+{{- if hasKey $sec "oidc" -}}
+{{- fail "single sign-on is configured twice: use sso or config.security.oidc, not both" -}}
+{{- end -}}
+{{- $o := dict "issuer" (required "sso.issuer is required with sso.enabled" $sso.issuer) -}}
+{{- $_ := set $o "client_id" (required "sso.clientId is required with sso.enabled" $sso.clientId) -}}
+{{- $_ := set $o "redirect_url" (required "sso.redirectUrl is required with sso.enabled (https://<console host>/auth/callback)" $sso.redirectUrl) -}}
+{{- if not $sso.publicClient -}}
+{{- $_ := set $o "client_secret" (dict "env" "CALIBAN_OIDC_CLIENT_SECRET") -}}
+{{- end -}}
+{{- with $sso.scopes -}}{{- $_ := set $o "scopes" . -}}{{- end -}}
+{{- with $sso.groupsClaim -}}{{- $_ := set $o "groups_claim" . -}}{{- end -}}
+{{- with $sso.apiAudience -}}{{- $_ := set $o "api_audience" . -}}{{- end -}}
+{{- with $sso.caFile -}}{{- $_ := set $o "ca_file" . -}}{{- end -}}
+{{- with $sso.postLogoutRedirectUrl -}}{{- $_ := set $o "post_logout_redirect_url" . -}}{{- end -}}
+{{- with $sso.sessionTtlSeconds -}}{{- $_ := set $o "session_ttl_secs" (int64 .) -}}{{- end -}}
+{{- with $sso.sessionIdleSeconds -}}{{- $_ := set $o "session_idle_secs" (int64 .) -}}{{- end -}}
+{{- $deploymentRoles := list "owner" "admin" "auditor" -}}
+{{- $tenantRoles := list "tenant_admin" "developer" "viewer" "billing" -}}
+{{- $mappings := list -}}
+{{- range $i, $m := $sso.roleMappings -}}
+{{- $role := required (printf "sso.roleMappings[%d].role is required" $i) $m.role -}}
+{{- $entry := dict "group" (required (printf "sso.roleMappings[%d].group is required" $i) $m.group) "role" $role -}}
+{{- if has $role $tenantRoles -}}
+{{- $_ := set $entry "tenant" (required (printf "sso.roleMappings[%d]: %s is a tenant role and needs a tenant" $i $role) $m.tenant) -}}
+{{- else if has $role $deploymentRoles -}}
+{{- if $m.tenant -}}
+{{- fail (printf "sso.roleMappings[%d]: %s is a deployment role and takes no tenant" $i $role) -}}
+{{- end -}}
+{{- else -}}
+{{- fail (printf "sso.roleMappings[%d]: unknown role %q (owner, admin, auditor, tenant_admin, developer, viewer, billing)" $i $role) -}}
+{{- end -}}
+{{- $mappings = append $mappings $entry -}}
+{{- end -}}
+{{- if $mappings -}}{{- $_ := set $o "role_mappings" $mappings -}}{{- end -}}
+{{- $_ := set $sec "oidc" $o -}}
+{{- if $noBreakGlass -}}{{- $_ := set $sec "break_glass" false -}}{{- end -}}
+{{- $_ := set $cfg "security" $sec -}}
+{{- else if $noBreakGlass -}}
+{{- fail "sso.breakGlass=false needs sso.enabled: without single sign-on nobody could sign in" -}}
+{{- end -}}
+# Rendered by the caliban Helm chart from .Values.config and .Values.sso. Do not edit in-cluster.
+{{- include "caliban.toml.table" (dict "prefix" "" "data" $cfg) }}
 {{ end -}}
 
 {{/* ───────────── shared pod / deployment ─────────────
@@ -314,6 +365,19 @@ spec:
                 secretKeyRef:
                   name: {{ include "caliban.authSecretName" $root }}
                   key: {{ $root.Values.auth.adminTokenKey }}
+                  {{- if $root.Values.sso.enabled }}
+                  # With single sign-on the token is only the break-glass credential: a Secret
+                  # without it leaves break-glass access off.
+                  optional: true
+                  {{- end }}
+            {{- if and $root.Values.sso.enabled (not $root.Values.sso.publicClient) }}
+            # Single sign-on client secret, referenced by [security.oidc] client_secret.
+            - name: CALIBAN_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.authSecretName" $root }}
+                  key: {{ $root.Values.auth.oidcClientSecretKey }}
+            {{- end }}
             - name: CALIBAN_DATABASE_URL
               valueFrom:
                 secretKeyRef:

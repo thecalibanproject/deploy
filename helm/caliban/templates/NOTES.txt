@@ -16,6 +16,11 @@ Image: {{ include "caliban.image" . }}
 Endpoints (in-cluster):
   data plane     http://{{ include "caliban.fullname" . }}-router.{{ .Release.Namespace }}.svc:{{ .Values.router.service.port }}/v1
   control plane  http://{{ include "caliban.fullname" . }}-control-plane.{{ .Release.Namespace }}.svc:{{ .Values.controlPlane.service.port }}/
+{{- if .Values.sso.enabled }}
+
+Console sign-in: single sign-on with {{ .Values.sso.issuer }}, back at {{ .Values.sso.redirectUrl }}.
+The admin token is {{ if eq (toString .Values.sso.breakGlass) "false" }}refused (sso.breakGlass=false){{ else }}the break-glass credential: every use is audited{{ end }}.
+{{- end }}
 
 {{- $pools := list }}
 {{- range .Values.modelPools.pools }}{{- if .enabled }}{{- $pools = append $pools (printf "%s (http://%s:%v/v1)" .name (.serviceName | default .name) (.port | default $.Values.modelPools.defaults.port)) }}{{- end }}{{- end }}
@@ -36,6 +41,9 @@ Quick check:
 
 Secrets this release reads (create them first unless auth.create=true):
   {{ include "caliban.authSecretName" . }}  keys: {{ .Values.auth.adminTokenKey }}, {{ .Values.auth.kekKey }} (and {{ .Values.auth.kekPreviousKey }} during a KEK rotation)
+{{- if and .Values.sso.enabled (not .Values.sso.publicClient) }}
+    and {{ .Values.auth.oidcClientSecretKey }} (single sign-on client secret)
+{{- end }}
   {{ .Values.database.existingSecret }}  key: {{ .Values.database.urlKey }}
 {{- if eq (include "caliban.routerMode" .) "snapshot" }}
 {{- if eq (include "caliban.snapshotSecretName" .) (include "caliban.snapshotRouterSecretName" .) }}
@@ -52,6 +60,11 @@ Secrets this release reads (create them first unless auth.create=true):
 
 NetworkPolicy: default-deny. Egress allowed to cluster DNS, datastores, local models
 {{- if .Values.networkPolicy.egress.providers }} and {{ len .Values.networkPolicy.egress.providers }} BYOK provider(s).{{ else }} only (no internet).{{ end }}
+{{- if and .Values.sso.enabled (not .Values.networkPolicy.egress.identityProvider) }}
+
+WARNING: sso.enabled but networkPolicy.egress.identityProvider is empty: the control plane
+cannot reach {{ .Values.sso.issuer }} and single sign-on will fail. The admin token still works.
+{{- end }}
 {{- else }}
 
 WARNING: networkPolicy.enabled=false. Pods have unrestricted egress.

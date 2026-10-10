@@ -46,12 +46,60 @@ auth:
   # Optional key in the same Secret with retired KEKs (base64, comma separated), set only during
   # a KEK rotation and read as CALIBAN_KEK_PREVIOUS. See README "KEK rotation".
   kekPreviousKey: kek-previous
+  # Key in the same Secret with the single sign-on client secret, read as
+  # CALIBAN_OIDC_CLIENT_SECRET by the control plane when sso.enabled (not for a public client):
+  #   kubectl create secret generic caliban-auth ... --from-literal=oidc-client-secret='<secret>'
+  oidcClientSecretKey: oidc-client-secret
   # DEV ONLY: let the chart create the Secret from the values below.
   # The values end up in the Helm release object; do not use in production.
   create: false
   adminToken: ""
   kek: ""
   kekPrevious: ""
+  oidcClientSecret: ""
+
+# ─────────────── Single sign-on (console and admin API) ───────────────
+# OpenID Connect against your own identity provider (Keycloak, Entra ID, Okta, ADFS, Authentik,
+# Dex, ...), with roles. Provider setup, roles and route permissions: core docs/sso.md.
+# Rendered into [security.oidc] of the generated caliban.toml; the client secret comes from the
+# auth Secret (auth.oidcClientSecretKey). The control plane must reach the issuer: allow it in
+# networkPolicy.egress.identityProvider. Alternatively write config.security.oidc yourself
+# (not both).
+sso:
+  enabled: false
+  # Exactly as the provider's discovery document reports it (`iss`), e.g.
+  # https://keycloak.example.internal/realms/caliban
+  issuer: ""
+  clientId: ""
+  # The console's callback, as browsers reach it through your ingress, registered at the
+  # provider: https://caliban.example.internal/auth/callback. Its origin is the console origin
+  # (CSRF checks), and https makes the session cookie Secure.
+  redirectUrl: ""
+  # true: public client (PKCE only), no client secret.
+  publicClient: false
+  # Empty = openid, profile, email.
+  scopes: []
+  # Claim with the user's groups (dotted path for nested claims). Empty = groups.
+  groupsClaim: ""
+  # Also accept access tokens for this audience on the admin API (CI, scripts). Empty = off.
+  apiAudience: ""
+  # PEM bundle of extra CA certificates for the provider (internal PKI): a path in the pod,
+  # mounted with extraVolumes / extraVolumeMounts.
+  caFile: ""
+  # Where the provider sends the browser after logout. Empty = the console root.
+  postLogoutRedirectUrl: ""
+  # Absolute session lifetime and idle timeout. 0 = core defaults (8 h, 1 h).
+  sessionTtlSeconds: 0
+  sessionIdleSeconds: 0
+  # Identity provider groups to roles. Roles: owner, admin, auditor (deployment-wide);
+  # tenant_admin, developer, viewer, billing (need a tenant). More can be granted in the
+  # console (Users and roles). Map at least your own group to owner for the first sign-in.
+  roleMappings: []
+  # - { group: caliban-owners, role: owner }
+  # - { group: acme-developers, role: developer, tenant: acme }
+  # The admin token stays as the break-glass credential (owner rights, every use audited).
+  # false refuses it once an owner can sign in with SSO (security.break_glass = false).
+  breakGlass: true
 
 # Split mode with router.mode=snapshot: the control plane signs config snapshots with an
 # Ed25519 key and routers verify them with the public key. Generate both with the image:
@@ -640,6 +688,16 @@ networkPolicy:
     #   cidrs: ["162.159.140.245/32"]     # example only; get current ranges from the provider
     #   hosts: ["api.openai.com"]
     #   ports: [443]
+    # The single sign-on issuer (sso.enabled), for the control plane only: discovery, signing
+    # keys and the token endpoint all live on the issuer's origin. Same shape as datastores.
+    # Rendered only with sso.enabled. Empty = no rule (the control plane cannot reach it).
+    identityProvider: []
+    # - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: keycloak } } }]
+    #   ports:
+    #     - { port: 8443, protocol: TCP }
+    # - to: [{ ipBlock: { cidr: 10.20.0.15/32 } }]   # an identity provider outside the cluster
+    #   ports:
+    #     - { port: 443, protocol: TCP }
     # Raw extra egress rules (NetworkPolicyEgressRule objects), e.g. an OTLP collector.
     extra: []
   cilium:

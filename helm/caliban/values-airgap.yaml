@@ -22,6 +22,21 @@ mode: standalone
 auth:
   existingSecret: caliban-auth
 
+# Single sign-on (sso in values.yaml) is off here. The issuer must be reachable from inside the
+# air gap: run the identity provider on the site network (Keycloak, ADFS, Dex, ...); a cloud
+# provider such as Entra ID or Okta cannot be reached from here. Caliban contacts only the
+# issuer's origin (discovery, signing keys, token endpoint), and the browser must reach it too.
+# Internal PKI: mount the CA bundle (extraVolumes / extraVolumeMounts) and set sso.caFile. Allow
+# the control plane's egress to it in networkPolicy.egress.identityProvider (below).
+# sso:
+#   enabled: true
+#   issuer: https://keycloak.site.internal/realms/caliban
+#   clientId: caliban-console
+#   redirectUrl: https://caliban.site.internal/auth/callback
+#   caFile: /etc/caliban-idp/ca.pem
+#   roleMappings:
+#     - { group: caliban-owners, role: owner }
+
 database:
   # On-site Postgres, e.g. a CloudNativePG cluster's app secret (key "uri").
   existingSecret: caliban-pg-app
@@ -268,4 +283,9 @@ networkPolicy:
     localModels: []
     # Zero egress: no providers.
     providers: []
+    # With sso.enabled: the site identity provider, for the control plane only, e.g.
+    # - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: keycloak } } }]
+    #   ports:
+    #     - { port: 8443, protocol: TCP }
+    identityProvider: []
     extra: []

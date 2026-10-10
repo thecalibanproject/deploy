@@ -177,4 +177,31 @@ spec:
       ports:
         - { port: http, protocol: TCP }
 {{- end }}
+{{- if and .Values.sso.enabled $np.egress.identityProvider }}
+---
+# 6) Egress from the control plane to the single sign-on issuer (discovery, signing keys,
+#    token endpoint). Routers never talk to the identity provider.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-egress-identity-provider
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [control-plane, standalone]
+  policyTypes: [Egress]
+  egress:
+    {{- range $np.egress.identityProvider }}
+    - to:
+        {{- toYaml .to | nindent 8 }}
+      ports:
+        {{- toYaml .ports | nindent 8 }}
+    {{- end }}
+{{- end }}
 {{- end }}

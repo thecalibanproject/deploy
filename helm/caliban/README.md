@@ -34,7 +34,8 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `snapshotKeys.routerExistingSecret` | `""` | Optional Secret with only `public-key` and `router-token`, read by the routers instead. |
 | `global.imageRegistry` | `""` | Private mirror for every image. The repository path is kept. |
 | `image.digest` | `""` | Pin by digest (recommended). Takes precedence over `image.tag`. |
-| `auth.existingSecret` | `caliban-auth` | Keys `admin-token` and `kek` (base64, 32 bytes). `auth.create=true` is for dev only. |
+| `auth.existingSecret` | `caliban-auth` | Keys `admin-token` and `kek` (base64, 32 bytes), and `oidc-client-secret` with single sign-on. `auth.create=true` is for dev only. |
+| `sso.enabled` | `false` | Single sign-on for the console and admin API, with roles. See [Single sign-on](#single-sign-on). |
 | `database.existingSecret` | `caliban-database` | Key `url`: the Postgres DSN. |
 | `providerKeys.existingSecret` | `""` | Every key becomes an env var, for `api_key = { env = "..." }` refs. Mounted on routers too, since refs resolve where the request is served. |
 | `extraEnv` | `[]` | Added to every Caliban pod. `router.extraEnv`, `controlPlane.extraEnv` and `standalone.extraEnv` add env to one component only. |
@@ -45,6 +46,7 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `router.autoscaling.enabled` | `false` | Turns on the HPA (CPU, optionally memory). Replicas are then left to the HPA. |
 | `networkPolicy.enabled` | `true` | Default-deny ingress and egress, plus an explicit allow-list. |
 | `networkPolicy.egress.providers` | `[]` | BYOK allow-list. `cidrs` go into the standard NetworkPolicy; `hosts` need `networkPolicy.cilium.enabled=true`. |
+| `networkPolicy.egress.identityProvider` | `[]` | With `sso.enabled`: egress from the control plane to the issuer (`to` and `ports`, like `datastores`). |
 
 ## Split mode: routers and the control plane
 
@@ -81,7 +83,8 @@ Where the keys go:
 | `CALIBAN_SNAPSHOT_PUBLIC_KEY` | routers | key `public-key` (base64; a comma-separated list is accepted for rotation) |
 | `CALIBAN_KEK` | all | `auth.existingSecret`; wraps the per-tenant data keys; routers open sealed BYOK credentials and derive the tenant `cache_salt` with it |
 | `CALIBAN_KEK_PREVIOUS` | all | optional key `kek-previous` of `auth.existingSecret` (`auth.kekPreviousKey`): retired KEKs, only during a KEK rotation |
-| `CALIBAN_ADMIN_TOKEN`, `CALIBAN_DATABASE_URL` | control plane, standalone | never on routers; core reads them only for the control plane |
+| `CALIBAN_ADMIN_TOKEN`, `CALIBAN_DATABASE_URL` | control plane, standalone | never on routers; core reads them only for the control plane. With `sso.enabled` the admin token key is optional (no key: break-glass access is off) |
+| `CALIBAN_OIDC_CLIENT_SECRET` | control plane, standalone | with `sso.enabled` (not `sso.publicClient`): key `oidc-client-secret` of `auth.existingSecret` (`auth.oidcClientSecretKey`) |
 
 `caliban gen-signing-key` prints a matching `CALIBAN_SNAPSHOT_SIGNING_KEY` and
 `CALIBAN_SNAPSHOT_PUBLIC_KEY` pair. Pods read these Secrets at start only, and the chart does
@@ -122,6 +125,61 @@ tenants, keys and routes in `config`. No snapshot Secret is needed.
 Helm parses every YAML number as a float, so whole numbers are written as integers.
 `0.0` becomes `0`, which serde accepts for `f64` fields.
 
+## Single sign-on
+
+The console and admin API can sign people in against your own OpenID Connect provider
+(Keycloak, Entra ID, Okta, ADFS, Authentik, Dex and others), with roles: `owner`, `admin` and
+`auditor` for the whole deployment, `tenant_admin`, `developer`, `viewer` and `billing` per
+tenant. The control plane runs the login as backend for the console: tokens never reach the
+browser, which holds only an `HttpOnly` session cookie. Provider setup (Keycloak and Entra ID
+steps), roles and the permission of every admin route: core
+[`docs/sso.md`](https://github.com/thecalibanproject/core/blob/main/docs/sso.md).
+
+1. Register a confidential client at the provider with the redirect URI
+   `https://<console host>/auth/callback`, the host your ingress serves the control plane on.
+2. Add the client secret to the auth Secret:
+   `kubectl create secret generic caliban-auth ... --from-literal=oidc-client-secret='<secret>'`
+   (or patch the existing Secret).
+3. Set the values and let the control plane reach the issuer:
+
+   ```yaml
+   sso:
+     enabled: true
+     issuer: https://keycloak.example.internal/realms/caliban   # exactly as discovery reports it
+     clientId: caliban-console
+     redirectUrl: https://caliban.example.internal/auth/callback
+     groupsClaim: groups            # Keycloak realm roles: realm_access.roles; Entra app roles: roles
+     apiAudience: caliban-api       # optional: access tokens for CI and scripts
+     roleMappings:
+       - { group: caliban-owners, role: owner }
+       - { group: acme-developers, role: developer, tenant: acme }
+   networkPolicy:
+     egress:
+       identityProvider:
+         - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: keycloak } } }]
+           ports:
+             - { port: 8443, protocol: TCP }
+   ```
+
+The chart renders these into `[security.oidc]` of `caliban.toml` (`client_secret = { env =
+"CALIBAN_OIDC_CLIENT_SECRET" }`) and checks the role mappings. Other settings:
+`sso.scopes`, `sso.caFile` (CA bundle for an internal PKI, mounted with `extraVolumes` and
+`extraVolumeMounts`), `sso.postLogoutRedirectUrl`, `sso.sessionTtlSeconds`,
+`sso.sessionIdleSeconds` and `sso.publicClient` (PKCE only, no secret). You can write
+`config.security.oidc` yourself instead, with core's key names, but not both.
+
+More roles are granted in the console (**Users and roles**), stored in Postgres. With several
+control-plane replicas, sessions are shared through Postgres too.
+
+The admin token stays the break-glass credential (owner rights, every use logged and audited).
+Once an owner can sign in with SSO, keep it offline or set `sso.breakGlass: false` to refuse
+it. With `sso.enabled`, the `admin-token` key of the auth Secret is optional.
+
+Serve the console over https: the redirect URL's origin is checked against the browser's
+`Origin` on writes, and an `https` redirect URL makes the session cookie `Secure` with the
+`__Host-` prefix. With Cilium, `identityProvider` takes standard peers only (`ipBlock`,
+selectors); for an FQDN rule use `networkPolicy.egress.extra` or a policy of your own.
+
 ## Security defaults
 
 Every pod runs with:
@@ -136,7 +194,8 @@ These meet the `restricted` Pod Security Standard.
 
 NetworkPolicy:
 - Egress is allowed only to cluster DNS, the other Caliban pods, the datastores, the local
-  model servers, and any `providers` you list.
+  model servers, and any `providers` you list. With `sso.enabled`, the control plane can also
+  reach the `identityProvider` peers.
 - Leaving `providers` empty means the pods have no internet path at all.
 
 ## Datastores: bring your own
