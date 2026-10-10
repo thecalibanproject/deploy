@@ -35,7 +35,10 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `worker.replicas` | `1` | Node workers (split mode with `router.mode=snapshot`). `0`: no worker, routers answer the run API with 503. Above 1 needs Valkey (the render fails without it). See [Node workers](#node-workers). |
 | `worker.token.existingSecret` / `worker.token.key` | `""` / `worker-token` | Router-to-worker token. Empty: the chart creates `<release>-worker-token` once and keeps it. Set it when you render with `helm template` (Argo CD). |
 | `worker.database.existingSecret` / `worker.database.urlKey` | `""` | A separate DML-only database credential for workers. Empty: `database.*`. |
-| `nodes.syncWaitSeconds`, `nodes.leaseSeconds`, `nodes.pollMs`, `nodes.maxRuns` | `""` (core defaults 60, 30, 500, 64) | `CALIBAN_NODE_*` on the pods that use them (routers, workers, standalone). |
+| `nodes.syncWaitSeconds`, `nodes.leaseSeconds`, `nodes.pollMs`, `nodes.maxRuns`, `nodes.runRetentionDays`, `nodes.breakerFailures`, `nodes.breakerCooldownSeconds` | `""` (core defaults 60, 30, 500, 64, 30, 5, 30) | `CALIBAN_NODE_*` on the pods that use them (routers, workers, standalone). |
+| `usageRetentionDays` | `""` (core default 90) | `CALIBAN_USAGE_RETENTION_DAYS` on the control plane and standalone. |
+| `toolTokens.existingSecret`, `toolTokens.keyKey`, `toolTokens.previousKeysKey`, `toolTokens.issuer` | auth Secret, `tool-token-key`, `tool-token-previous-keys`, `""` | Node tool token signing key (optional; never generated). See [Node tools](#node-tools-mcp-servers-and-tool-tokens). |
+| `networkPolicy.egress.mcp` | `[]` | MCP tool servers the control plane, workers and standalone may reach. |
 | `metrics.serviceMonitor.enabled` | `false` | A Prometheus Operator ServiceMonitor for `/metrics` on routers (or standalone) and workers. See [Metrics](#metrics). |
 | `snapshotKeys.existingSecret` | `caliban-snapshot` | Keys `signing-key`, `public-key`, `router-token`. Needed only with `router.mode=snapshot`. `snapshotKeys.create=true` is for dev only. |
 | `snapshotKeys.routerExistingSecret` | `""` | Optional Secret with only `public-key` and `router-token`, read by the routers instead. |
@@ -109,6 +112,7 @@ Where the keys go:
 | `CALIBAN_DATABASE_URL` | control plane, standalone, workers | `database.existingSecret`; workers use `worker.database.existingSecret` when set (DML only). Never on routers |
 | `CALIBAN_WORKER_TOKEN` | routers, workers | `worker.token.existingSecret` (key `worker-token`), or the Secret the chart creates |
 | `CALIBAN_WORKER_URLS` | routers | the worker Service, `http://<release>-worker:8082` |
+| `CALIBAN_TOOL_TOKEN_KEY`, `CALIBAN_TOOL_TOKEN_PREVIOUS_KEYS` | control plane, workers, standalone | optional keys `tool-token-key` and `tool-token-previous-keys` of `toolTokens.existingSecret` (default: the auth Secret). Never on routers |
 | `CALIBAN_OIDC_CLIENT_SECRET` | control plane, standalone | with `sso.enabled` (not `sso.publicClient`): key `oidc-client-secret` of `auth.existingSecret` (`auth.oidcClientSecretKey`) |
 
 `caliban gen-signing-key` prints a matching `CALIBAN_SNAPSHOT_SIGNING_KEY` and
@@ -151,8 +155,8 @@ routers do not hold. So with `mode: split` and `router.mode: snapshot` the chart
   `FOR UPDATE SKIP LOCKED`, leases, takeover when a worker dies), makes its model calls through
   its own pipeline in-process (PII, caches, routing, quotas, metering) and ships usage to the
   control plane like a router, with the same spool. Probes use `/healthz` on 8082; `/metrics` is
-  there too. Each worker's id is its pod name (`CALIBAN_WORKER_ID`; core adds a random suffix per
-  process).
+  there too. Each worker's id is its pod name (`CALIBAN_WORKER_ID`), which core uses as is for
+  its check-ins and usage shipping.
 - **Routers forward the run API** (`POST /v1/nodes/{name}/runs`, `GET /v1/runs/{id}`,
   `POST /v1/runs/{id}/input`) to `CALIBAN_WORKER_URLS=http://<release>-worker:8082`, after
   checking the API key, with `CALIBAN_WORKER_TOKEN`. Workers check the key again.
@@ -163,7 +167,8 @@ routers do not hold. So with `mode: split` and `router.mode: snapshot` the chart
 - **NetworkPolicies.** Workers accept only routers on 8082 (plus `networkPolicy.ingress.worker`),
   and routers get an egress rule to that port. Workers share the egress allow-list of the other
   Caliban pods: the control plane (snapshots, usage), Postgres, Valkey, Qdrant, model pools and
-  BYOK providers; model pools accept workers.
+  BYOK providers; model pools accept workers. MCP tool servers need `networkPolicy.egress.mcp`
+  (see [Node tools](#node-tools-mcp-servers-and-tool-tokens)).
 
 Standalone runs nodes in its own process (Postgres journal), so it gets no worker; nor does
 `router.mode: static`, which has no snapshots. `worker.replicas: 0` turns node runs off in split
@@ -179,24 +184,34 @@ shared store (`config.limits.store: valkey`, with `valkey.url` or `valkey.existi
 that worker get the stored response instead of paying twice; the in-memory store only covers
 one process. The render fails for `worker.replicas > 1` without it.
 
-**Database role.** The control plane owns the migrations: workers do not apply them and refuse
-to start while the schema version differs from theirs (so upgrade the control plane first). A
-worker needs no DDL, only DML on the node journal. To keep the control plane's credential off
-worker pods, create a role for them and point `worker.database.existingSecret` at its DSN:
+**Database role.** The control plane owns the migrations: a worker never changes the schema,
+checks at start that the database holds exactly the migrations it was built with, and refuses to
+start otherwise, saying whether the control plane or the worker is behind (so upgrade the control
+plane first). A worker needs no DDL. To keep the control plane's credential off worker pods,
+create a role for them and point `worker.database.existingSecret` at its DSN. These are the grants
+core tests a worker with (`postgres_worker_grants_are_enough`):
 
 ```sql
 CREATE ROLE caliban_worker LOGIN PASSWORD '<password>';
 GRANT CONNECT ON DATABASE caliban TO caliban_worker;
-GRANT USAGE ON SCHEMA public TO caliban_worker;
+GRANT USAGE ON SCHEMA public TO caliban_worker;  -- the schema holding Caliban's tables
 GRANT SELECT ON caliban_schema_migrations TO caliban_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON node_run, node_step, node_event TO caliban_worker;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO caliban_worker;
+GRANT SELECT, INSERT, UPDATE ON node_spend TO caliban_worker;
+ALTER ROLE caliban_worker BYPASSRLS;
 ```
 
-Run the grants after the control plane has created the tables, and again after an upgrade that
-adds node tables. The list follows core's journal at the time of writing; core
-[`docs/nodes.md`](https://github.com/thecalibanproject/core/blob/main/docs/nodes.md) is the
-authority.
+- **`BYPASSRLS`.** The journal tables have per-tenant row-level security, and a worker serves
+  every tenant. Granting it needs a superuser (or, from PostgreSQL 16, a role that has
+  `BYPASSRLS` itself); with CloudNativePG, declare a managed role with `bypassrls: true`.
+- **`DELETE`** is for the retention purge of finished runs (`nodes.runRetentionDays`), which
+  removes their steps and events with them. **`node_spend`** holds each tenant's spend per day,
+  checked against the tenant's node spend caps.
+- No sequence grants: `node_step.seq` is an identity column. Workers write nothing else (usage
+  goes to the control plane over HTTP).
+- Run the grants after the control plane has created the tables, and again after an upgrade that
+  adds node tables (core [`docs/nodes.md`](https://github.com/thecalibanproject/core/blob/main/docs/nodes.md)
+  lists them).
 
 **Upgrade order.** Control plane first (migrations), then routers, then workers. One
 `helm upgrade` rolls all three: a worker that starts before the control plane has migrated
@@ -204,6 +219,69 @@ exits and is restarted until the schema matches, while the old worker keeps runn
 (`maxUnavailable: 0`). Routers of an earlier release refuse snapshots that carry nodes (and keep
 serving their last good one), so publish no node until `kubectl rollout status
 deploy/<release>-router` has finished.
+
+**Node settings** (`nodes.*`, empty = core's default): `syncWaitSeconds` (routers, workers,
+standalone), `leaseSeconds`, `pollMs`, `maxRuns`, `runRetentionDays` (finished runs kept 30
+days; 0 keeps them), `breakerFailures` and `breakerCooldownSeconds` (the per-tool circuit
+breaker: 5 failures, 30 s) on workers and standalone. `usageRetentionDays` (control plane and
+standalone, default 90, 0 keeps them) is how long raw usage events stay before they move into the
+daily roll-up; totals do not change, but per-run filters only cover the raw window, and an event
+delivered later than that is refused.
+
+### Node tools: MCP servers and tool tokens
+
+Nodes call tools on MCP servers that tenants register in the control plane (core
+[`docs/tools.md`](https://github.com/thecalibanproject/core/blob/main/docs/tools.md)). Workers
+(and standalone) make the calls; the control plane connects to discover a server's tools.
+
+**Egress.** Registered URLs may be anywhere, private ranges included; core always refuses
+loopback, link-local and cloud metadata addresses. The NetworkPolicy still decides what the pods
+can reach, and by default that is no MCP server at all. List the networks your tool servers live
+in under `networkPolicy.egress.mcp` (same shape as `datastores`); the chart renders
+`<release>-egress-mcp` for the control plane, workers and standalone, never routers:
+
+```yaml
+networkPolicy:
+  egress:
+    mcp:
+      - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: mcp-tools } } }]
+        ports: [{ port: 8443, protocol: TCP }]
+      - to: [{ ipBlock: { cidr: 10.30.0.0/24 } }]
+        ports: [{ port: 443, protocol: TCP }]
+```
+
+Never list `169.254.0.0/16`. `CALIBAN_MCP_ALLOW_LOOPBACK` is for development only: the chart
+refuses it in `extraEnv` and the per-component `extraEnv`.
+
+**Tool tokens.** For a server registered with `caliban_token` auth, the worker mints a JWT per
+call (Ed25519, 60 s, scoped to the one tool, never the client's credentials). The signing seed is
+`CALIBAN_TOOL_TOKEN_KEY` on the control plane, workers and standalone (never routers), from the
+`tool-token-key` key of the auth Secret, or of `toolTokens.existingSecret`:
+
+```bash
+docker run --rm caliban/caliban:0.1.0 gen-tool-token-key   # the seed, and its public key
+kubectl -n caliban patch secret caliban-auth --type merge \
+  -p "{\"stringData\":{\"tool-token-key\":\"<seed>\"}}"
+kubectl -n caliban rollout restart deploy/caliban-control-plane deploy/caliban-worker
+```
+
+The key is optional: without it, calls to `caliban_token` servers fail with a clear error, and
+servers with API key, OAuth or no authentication still work. The chart never generates it. Unlike
+the worker token, which only routers and workers of the release share, this key is trusted by
+servers outside the release (some pin its public key), so a value regenerated by a template
+render (`helm template`, Argo CD) would silently rotate it, and it would sit in the Helm release
+history. `toolTokens.issuer` sets the tokens' `iss` (default `caliban`).
+
+**For MCP server operators.** Verify the tokens against the control plane's JWKS,
+`GET /.well-known/caliban-tool-jwks.json` (public, no authentication; it lists the current and
+previous public keys), or configure the public key printed by `gen-tool-token-key` when the
+server cannot reach the control plane. Check `iss`, `aud` (the server's registered audience,
+default its URL's origin), the validity window and that `scope` names the tool being called.
+
+**Rotation.** Put the new seed in `tool-token-key` and the old public key in
+`tool-token-previous-keys` (comma separated), restart the control plane and the workers (the
+JWKS then lists both), and remove the previous key a few minutes after every worker runs the new
+one.
 
 ### How `config` is rendered to TOML
 
@@ -290,6 +368,8 @@ NetworkPolicy:
   model servers, and any `providers` you list. With `sso.enabled`, the control plane can also
   reach the `identityProvider` peers.
 - Workers (8082) accept only routers, plus `networkPolicy.ingress.worker` peers.
+- MCP tool servers are reachable only from the control plane, workers and standalone, and only
+  those listed in `networkPolicy.egress.mcp`.
 - Leaving `providers` empty means the pods have no internet path at all.
 
 ## Datastores: bring your own

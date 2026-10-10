@@ -171,6 +171,58 @@ jobs:
           hasnt "$(part "$out" deployment-control-plane.yaml)" 'CALIBAN_NODE_' nodes
           has "$(helm template caliban helm/caliban --set mode=standalone --set nodes.maxRuns=16)" \
             'name: CALIBAN_NODE_MAX_RUNS' standalone
+      - name: Node tools - tool token key, MCP egress, retention and breaker settings
+        run: |
+          has() { grep -qF -- "$2" <<<"$1" || { echo "::error::missing '$2' ($3)"; exit 1; }; }
+          hasnt() { if grep -qF -- "$2" <<<"$1"; then echo "::error::unexpected '$2' ($3)"; exit 1; fi; }
+          part() { awk -v f="$2" '$0 ~ "^# Source: caliban/templates/"f {p=1; next} /^---/ {p=0} p' <<<"$1"; }
+          out=$(helm template caliban helm/caliban)
+          for f in deployment-control-plane.yaml deployment-worker.yaml; do
+            d=$(part "$out" "$f")
+            has "$d" 'name: CALIBAN_TOOL_TOKEN_KEY' "$f"
+            has "$d" 'key: tool-token-key' "$f"
+            has "$d" 'key: tool-token-previous-keys' "$f"
+          done
+          hasnt "$(part "$out" deployment-router.yaml)" 'CALIBAN_TOOL_TOKEN' router
+          # The chart never generates the signing key, and nothing is opened to MCP servers by default.
+          hasnt "$(part "$out" secret.yaml)" 'tool-token-key' generated
+          hasnt "$out" 'egress-mcp' default
+          hasnt "$out" 'RETENTION_DAYS' default
+          hasnt "$out" 'CALIBAN_MCP_ALLOW_LOOPBACK' default
+          cat > /tmp/tools.yaml <<'EOF'
+          toolTokens: { existingSecret: caliban-tool-tokens, issuer: caliban-prod }
+          nodes: { runRetentionDays: 0, breakerFailures: 7, breakerCooldownSeconds: 60 }
+          usageRetentionDays: 120
+          networkPolicy:
+            egress:
+              mcp:
+                - to: [{ ipBlock: { cidr: 10.30.0.0/24 } }]
+                  ports: [{ port: 443, protocol: TCP }]
+          EOF
+          helm lint --strict helm/caliban -f /tmp/tools.yaml
+          out=$(helm template caliban helm/caliban -f /tmp/tools.yaml)
+          mcp=$(part "$out" networkpolicy.yaml)
+          has "$mcp" 'name: caliban-egress-mcp' mcp
+          has "$mcp" 'values: [control-plane, worker, standalone]' mcp
+          has "$mcp" 'cidr: 10.30.0.0/24' mcp
+          worker=$(part "$out" deployment-worker.yaml)
+          for want in 'name: caliban-tool-tokens' 'value: "caliban-prod"' 'name: CALIBAN_NODE_RUN_RETENTION_DAYS' \
+              'value: "0"' 'name: CALIBAN_NODE_BREAKER_FAILURES' 'value: "7"' 'value: "60"'; do
+            has "$worker" "$want" worker
+          done
+          hasnt "$worker" 'CALIBAN_USAGE_RETENTION_DAYS' worker
+          has "$(part "$out" deployment-control-plane.yaml)" 'name: CALIBAN_USAGE_RETENTION_DAYS' control-plane
+          out=$(helm template caliban helm/caliban -f /tmp/tools.yaml --set mode=standalone)
+          for want in CALIBAN_USAGE_RETENTION_DAYS CALIBAN_NODE_RUN_RETENTION_DAYS CALIBAN_TOOL_TOKEN_KEY; do
+            has "$out" "name: $want" standalone
+          done
+          # The development-only loopback switch is refused, globally or per component.
+          for v in extraEnv worker.extraEnv controlPlane.extraEnv; do
+            if helm template caliban helm/caliban --set "${v}[0].name=CALIBAN_MCP_ALLOW_LOOPBACK" \
+                --set "${v}[0].value=true" > /dev/null 2>&1; then
+              echo "::error::CALIBAN_MCP_ALLOW_LOOPBACK in $v should fail the render"; exit 1
+            fi
+          done
       - name: More than one worker needs Valkey (the shared Idempotency-Key store)
         run: |
           helm lint --strict helm/caliban --set worker.replicas=3

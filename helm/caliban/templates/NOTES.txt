@@ -14,6 +14,8 @@ console or admin API do NOT reach them. Keep them in `config`, or use router.mod
 {{- if eq (include "caliban.workersEnabled" .) "true" }}
 
 Node runs: routers forward them to {{ .Values.worker.replicas }} node worker(s) at {{ include "caliban.workerUrl" . }}.
+MCP tool servers verify the tool tokens against the control plane's
+/.well-known/caliban-tool-jwks.json (or the public key from `caliban gen-tool-token-key`).
 Upgrade order for this release: control plane (it owns the migrations; workers refuse a schema
 they do not match), then routers, then workers. Publish no node before every router runs this
 release: older routers refuse snapshots with nodes and keep serving their last good one.
@@ -71,6 +73,7 @@ Secrets this release reads (create them first unless auth.create=true):
   {{ . }}  key: {{ $.Values.worker.database.urlKey | default $.Values.database.urlKey }} (workers: DML-only database role)
 {{- end }}
 {{- end }}
+  {{ .Values.toolTokens.existingSecret | default (include "caliban.authSecretName" .) }}  optional keys: {{ .Values.toolTokens.keyKey }}, {{ .Values.toolTokens.previousKeysKey }} (node tool tokens; control plane{{ if eq (include "caliban.workersEnabled" .) "true" }} and workers{{ end }})
 {{- with .Values.providerKeys.existingSecret }}
   {{ . }}  (all keys exposed as env vars for BYOK)
 {{- end }}
@@ -78,6 +81,11 @@ Secrets this release reads (create them first unless auth.create=true):
 
 NetworkPolicy: default-deny. Egress allowed to cluster DNS, datastores, local models
 {{- if .Values.networkPolicy.egress.providers }} and {{ len .Values.networkPolicy.egress.providers }} BYOK provider(s).{{ else }} only (no internet).{{ end }}
+{{- if not .Values.networkPolicy.egress.mcp }}
+
+Node tools: networkPolicy.egress.mcp is empty, so workers and the control plane cannot reach any
+MCP tool server. List the networks of the servers tenants register there.
+{{- end }}
 {{- if and .Values.sso.enabled (not .Values.networkPolicy.egress.identityProvider) }}
 
 WARNING: sso.enabled but networkPolicy.egress.identityProvider is empty: the control plane

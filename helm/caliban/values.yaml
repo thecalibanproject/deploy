@@ -48,6 +48,7 @@ auth:
   # Optional key in the same Secret with retired KEKs (base64, comma separated), set only during
   # a KEK rotation and read as CALIBAN_KEK_PREVIOUS. See README "KEK rotation".
   kekPreviousKey: kek-previous
+  # The node tool token seed and retired public keys live here too by default (toolTokens).
   # Key in the same Secret with the single sign-on client secret, read as
   # CALIBAN_OIDC_CLIENT_SECRET by the control plane when sso.enabled (not for a public client):
   #   kubectl create secret generic caliban-auth ... --from-literal=oidc-client-secret='<secret>'
@@ -59,6 +60,8 @@ auth:
   kek: ""
   kekPrevious: ""
   oidcClientSecret: ""
+  # Written as toolTokens.keyKey when set (gen-tool-token-key).
+  toolTokenKey: ""
 
 # ─────────────── Single sign-on (console and admin API) ───────────────
 # OpenID Connect against your own identity provider (Keycloak, Entra ID, Okta, ADFS, Authentik,
@@ -202,6 +205,40 @@ nodes:
   pollMs: ""
   # CALIBAN_NODE_MAX_RUNS: runs one process executes at once (core default 64).
   maxRuns: ""
+  # CALIBAN_NODE_RUN_RETENTION_DAYS: days finished runs (with their steps and events) are kept
+  # before workers purge them; 0 keeps them (core default 30). The tenants' daily spend stays.
+  runRetentionDays: ""
+  # CALIBAN_NODE_BREAKER_FAILURES: failed calls in a row that open a tool's circuit breaker, per
+  # tool and tenant in each process (core default 5).
+  breakerFailures: ""
+  # CALIBAN_NODE_BREAKER_COOLDOWN_SECS: how long an open breaker refuses calls before one trial
+  # call (core default 30).
+  breakerCooldownSeconds: ""
+
+# CALIBAN_USAGE_RETENTION_DAYS on the control plane (and standalone): days raw usage events stay
+# in Postgres before they move into the daily roll-up (totals unchanged); 0 keeps them. Empty =
+# core default 90. An event delivered later than this (a router offline that long) is refused.
+usageRetentionDays: ""
+
+# Node tool tokens (core docs/tools.md, "Tokens: no passthrough"). For an MCP server registered
+# with `caliban_token` auth, workers (and standalone) mint a 60 s Ed25519-signed JWT per tool call;
+# the control plane uses the key for discovery and publishes the public keys at
+# GET /.well-known/caliban-tool-jwks.json (no authentication), which MCP server operators point
+# their verifier at. The seed comes from a Secret you create, never from the chart:
+#   docker run --rm caliban/caliban:0.1.0 gen-tool-token-key   # prints the seed and its public key
+#   kubectl create secret generic caliban-auth ... --from-literal=tool-token-key='<seed>'
+# Read by the control plane, workers and standalone, never by routers. The keys are optional:
+# without tool-token-key, calls to caliban_token servers fail with a clear error (servers with
+# api_key, OAuth or no auth still work). Rotation: new seed in tool-token-key, the old PUBLIC key
+# in tool-token-previous-keys (comma separated), restart the control plane and workers; remove it
+# a few minutes after every worker runs the new key (tokens live 60 s).
+toolTokens:
+  # Secret holding the keys below. Empty = auth.existingSecret (the auth Secret).
+  existingSecret: ""
+  keyKey: tool-token-key
+  previousKeysKey: tool-token-previous-keys
+  # CALIBAN_TOOL_TOKEN_ISSUER, the `iss` of minted tokens. Empty = core default `caliban`.
+  issuer: ""
 
 # Prometheus Operator scraping. GET /metrics is served without authentication on the data-plane
 # port of routers and standalone (8080) and on the worker port (8082); core's control plane has
@@ -821,6 +858,19 @@ networkPolicy:
     #   ports:
     #     - { port: 8443, protocol: TCP }
     # - to: [{ ipBlock: { cidr: 10.20.0.15/32 } }]   # an identity provider outside the cluster
+    #   ports:
+    #     - { port: 443, protocol: TCP }
+    # MCP tool servers tenants register for their nodes (core docs/tools.md). Workers call them,
+    # the control plane discovers their tools, standalone does both; routers never do. Same shape
+    # as datastores. Empty = no rule: those pods cannot reach any MCP server. Core already refuses
+    # loopback, link-local and cloud metadata addresses and allows private ranges, so list the
+    # networks your servers live in, never 169.254.0.0/16. Keep CALIBAN_MCP_ALLOW_LOOPBACK unset
+    # (development only; the chart refuses it in extraEnv).
+    mcp: []
+    # - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: mcp-tools } } }]
+    #   ports:
+    #     - { port: 8443, protocol: TCP }
+    # - to: [{ ipBlock: { cidr: 10.30.0.0/24 } }]     # tool servers outside the cluster
     #   ports:
     #     - { port: 443, protocol: TCP }
     # Raw extra egress rules (NetworkPolicyEgressRule objects), e.g. an OTLP collector.

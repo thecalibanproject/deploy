@@ -312,6 +312,11 @@ app.kubernetes.io/component: {{ .component }}
 {{- $forward := and $snapRouter (eq (include "caliban.workersEnabled" $root) "true") -}}
 {{- $executes := or $isWorker (eq $c "standalone") -}}
 {{- $nodes := $root.Values.nodes -}}
+{{- range (concat ($root.Values.extraEnv | default list) ($cv.extraEnv | default list)) -}}
+{{- if eq (toString .name) "CALIBAN_MCP_ALLOW_LOOPBACK" -}}
+{{- fail "CALIBAN_MCP_ALLOW_LOOPBACK lets tenant-registered MCP servers reach the pod's own host; it is for development only and the chart refuses it" -}}
+{{- end -}}
+{{- end -}}
 {{- if $snapClient -}}
 {{- $poll := int $root.Values.router.snapshot.pollIntervalSeconds -}}
 {{- if lt $poll 1 -}}{{- fail "router.snapshot.pollIntervalSeconds must be >= 1" -}}{{- end -}}
@@ -477,9 +482,8 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             {{- else }}
-            # Worker id: lease owner on the runs it executes, check-in and usage shipping id.
-            # Core appends a random suffix per process, so a restarted container never reuses
-            # the leases of the one before it.
+            # Worker id, used as is for check-ins and usage shipping (core gives leases a
+            # random per-process suffix of their own).
             - name: CALIBAN_WORKER_ID
               valueFrom:
                 fieldRef:
@@ -499,24 +503,48 @@ spec:
             - name: CALIBAN_WORKER_URLS
               value: {{ include "caliban.workerUrl" $root | quote }}
             {{- end }}
+            {{- /* Node settings: rendered only when set ("" = core default; 0 is a value). */}}
+            {{- $nodeEnv := list }}
             {{- if or $forward $executes }}
-            {{- with $nodes.syncWaitSeconds }}
-            - name: CALIBAN_NODE_SYNC_WAIT_SECS
-              value: {{ int . | quote }}
-            {{- end }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_NODE_SYNC_WAIT_SECS" $nodes.syncWaitSeconds) }}
             {{- end }}
             {{- if $executes }}
-            {{- with $nodes.leaseSeconds }}
-            - name: CALIBAN_NODE_LEASE_SECS
-              value: {{ int . | quote }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_NODE_LEASE_SECS" $nodes.leaseSeconds) }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_NODE_POLL_MS" $nodes.pollMs) }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_NODE_MAX_RUNS" $nodes.maxRuns) }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_NODE_RUN_RETENTION_DAYS" $nodes.runRetentionDays) }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_NODE_BREAKER_FAILURES" $nodes.breakerFailures) }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_NODE_BREAKER_COOLDOWN_SECS" $nodes.breakerCooldownSeconds) }}
             {{- end }}
-            {{- with $nodes.pollMs }}
-            - name: CALIBAN_NODE_POLL_MS
-              value: {{ int . | quote }}
+            {{- if $isCP }}
+            {{- $nodeEnv = append $nodeEnv (list "CALIBAN_USAGE_RETENTION_DAYS" $root.Values.usageRetentionDays) }}
             {{- end }}
-            {{- with $nodes.maxRuns }}
-            - name: CALIBAN_NODE_MAX_RUNS
-              value: {{ int . | quote }}
+            {{- range $nodeEnv }}
+            {{- if and (not (kindIs "invalid" (index . 1))) (ne (toString (index . 1)) "") }}
+            - name: {{ index . 0 }}
+              value: {{ int (index . 1) | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if or $isCP $isWorker }}
+            # Node tool tokens (toolTokens): signs the per-call JWTs for MCP servers with
+            # caliban_token auth; the control plane publishes the JWKS. Optional keys.
+            {{- $tt := $root.Values.toolTokens }}
+            {{- $ttSecret := $tt.existingSecret | default (include "caliban.authSecretName" $root) }}
+            - name: CALIBAN_TOOL_TOKEN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ttSecret }}
+                  key: {{ $tt.keyKey }}
+                  optional: true
+            - name: CALIBAN_TOOL_TOKEN_PREVIOUS_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ttSecret }}
+                  key: {{ $tt.previousKeysKey }}
+                  optional: true
+            {{- with $tt.issuer }}
+            - name: CALIBAN_TOOL_TOKEN_ISSUER
+              value: {{ . | quote }}
             {{- end }}
             {{- end }}
             {{- if $spool }}
