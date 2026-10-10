@@ -196,7 +196,7 @@ CREATE ROLE caliban_worker LOGIN PASSWORD '<password>';
 GRANT CONNECT ON DATABASE caliban TO caliban_worker;
 GRANT USAGE ON SCHEMA public TO caliban_worker;  -- the schema holding Caliban's tables
 GRANT SELECT ON caliban_schema_migrations TO caliban_worker;
-GRANT SELECT, INSERT, UPDATE, DELETE ON node_run, node_step, node_event TO caliban_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON node_run, node_step, node_event, node_run_event, node_audit TO caliban_worker;
 GRANT SELECT, INSERT, UPDATE ON node_spend TO caliban_worker;
 ALTER ROLE caliban_worker BYPASSRLS;
 ```
