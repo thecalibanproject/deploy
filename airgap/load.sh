@@ -56,10 +56,16 @@ if [[ -f "$BUNDLE" ]]; then
   fi
   WORKDIR="${WORKDIR:-$(dirname "$BUNDLE")}"
   mkdir -p "$WORKDIR"
-  top="$(tar -tf "$BUNDLE" | head -1 | cut -d/ -f1)"
-  [[ "$top" =~ ^caliban-bundle-[A-Za-z0-9._+-]+$ ]] || die "unexpected bundle layout ($top)"
+  # List once into a file. Piping `tar -t` into `head` or `grep -q` under pipefail breaks on large
+  # bundles: the reader exits early, tar dies of SIGPIPE (141), so the layout check aborted the
+  # install and the traversal check below could report "no unsafe path" when it had found one.
+  listing="$(mktemp)"
+  tar -tf "$BUNDLE" > "$listing" || { rm -f "$listing"; die "cannot list $(basename "$BUNDLE")"; }
+  top="$(head -1 "$listing" | cut -d/ -f1)"
+  [[ "$top" =~ ^caliban-bundle-[A-Za-z0-9._+-]+$ ]] || { rm -f "$listing"; die "unexpected bundle layout ($top)"; }
   # Refuse absolute paths / traversal before extracting.
-  if tar -tf "$BUNDLE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then die "unsafe paths in bundle"; fi
+  if grep -Eq '(^/|(^|/)\.\.(/|$))' "$listing"; then rm -f "$listing"; die "unsafe paths in bundle"; fi
+  rm -f "$listing"
   log "extracting to $WORKDIR/$top"
   tar -C "$WORKDIR" -xf "$BUNDLE"
   DIR="$WORKDIR/$top"

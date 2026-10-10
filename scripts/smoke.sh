@@ -57,7 +57,7 @@ echo
 echo "[health]"
 check "router /healthz"               "$CALIBAN_URL/healthz"
 check "control-plane /api/v1/health"  "$CALIBAN_ADMIN_URL/api/v1/health"
-check "router /metrics"               "$CALIBAN_URL/metrics"
+# No /metrics check: core has no Prometheus endpoint yet (see the core README).
 check "web console /"                 "$CALIBAN_ADMIN_URL/"
 if [[ -n "${CALIBAN_ADMIN_TOKEN:-}" ]]; then
   # /api/v1/health is unauthenticated; /api/v1/tenants is not. 401 = wrong token.
@@ -83,8 +83,9 @@ if [[ "$SKIP_CHAT" == 1 ]]; then
   echo; echo "SKIP_CHAT=1: skipping /v1 checks"
 elif [[ -z "${CALIBAN_API_KEY:-}" ]]; then
   echo
-  echo "[v1] skipped: set CALIBAN_API_KEY (generate with: docker compose run --rm caliban keygen,"
-  echo "     add the hash to tenants.api_key_hashes in compose/config/caliban.toml, restart caliban)"
+  echo "[v1] skipped: set CALIBAN_API_KEY to a tenant key, or run with MINT_KEY=1 (and"
+  echo "     CALIBAN_ADMIN_TOKEN) to mint one through the admin API. Keys in the config file are"
+  echo "     ignored once Postgres is seeded."
 else
   echo
   echo "[v1]"
