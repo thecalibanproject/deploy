@@ -33,7 +33,29 @@ web_dir = "/usr/share/caliban/web"
 [security]
 # deny_by_default: the data plane only calls base_urls declared in this file.
 egress = "deny_by_default"
+# Bootstrap admin token. Once single sign-on works it is the break-glass credential (owner rights,
+# every use audited); `break_glass = false` (or CALIBAN_BREAK_GLASS=false in .env) turns it off.
 admin_token = { env = "CALIBAN_ADMIN_TOKEN" }
+
+# Single sign-on (core docs/sso.md). The simplest setup is the CALIBAN_OIDC_* settings in .env.
+# Use this section instead when you need tenant-scoped group mappings; CALIBAN_OIDC_* values that
+# are set still override its fields. Read on every start (not seeded into the database).
+# [security.oidc]
+# issuer = "https://keycloak.example.internal/realms/caliban"   # exactly as discovery reports it
+# client_id = "caliban-console"
+# client_secret = { env = "CALIBAN_OIDC_CLIENT_SECRET" }
+# redirect_url = "https://caliban.example.internal/auth/callback"
+# groups_claim = "groups"            # dotted path for nested claims, e.g. "realm_access.roles"
+#
+# Roles: owner, admin, auditor (deployment); tenant_admin, developer, viewer, billing (need tenant).
+# [[security.oidc.role_mappings]]
+# group = "caliban-owners"
+# role = "owner"
+#
+# [[security.oidc.role_mappings]]
+# group = "acme-developers"
+# role = "developer"
+# tenant = "acme"
 
 [cache]
 exact_enabled = true

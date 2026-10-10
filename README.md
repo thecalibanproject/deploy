@@ -117,7 +117,7 @@ To mint a key offline instead, run `docker compose run --rm caliban keygen` and 
 
 **Health.** The `caliban` service has a Docker healthcheck that runs the binary itself (`caliban healthcheck --addr 127.0.0.1:8080 --path /healthz`), since the distroless image has no shell or curl. `docker compose ps` shows it as `healthy` once it serves, `docker compose up -d --wait` returns only then, and other services can wait for it with `depends_on: { caliban: { condition: service_healthy } }`.
 
-The web console is at `http://127.0.0.1:8081/`; log in with `CALIBAN_ADMIN_TOKEN`. The ports bind to `127.0.0.1` by default (`CALIBAN_BIND`, `CALIBAN_ROUTER_PORT`, `CALIBAN_CP_PORT`). Put a TLS reverse proxy in front before exposing them.
+The web console is at `http://127.0.0.1:8081/`; log in with `CALIBAN_ADMIN_TOKEN`, or with single sign-on once it is set up (below). The ports bind to `127.0.0.1` by default (`CALIBAN_BIND`, `CALIBAN_ROUTER_PORT`, `CALIBAN_CP_PORT`). Put a TLS reverse proxy in front before exposing them.
 
 **Config seeding.** The compose stack runs with Postgres (`CALIBAN_DATABASE_URL`), so `config/caliban.toml` seeds the database **once**, on the first start. After that, tenants, API keys, BYOK credentials, providers, models and routes are managed in the console or through the admin API, and those sections of the file are ignored. `[server]`, `[security]`, `[cache]`, `[pii]`, `[limits]` and `[routing]` are always read from the file.
 
@@ -126,6 +126,15 @@ The web console is at `http://127.0.0.1:8081/`; log in with `CALIBAN_ADMIN_TOKEN
 - `postgres`, `qdrant`, `valkey` and every model server sit only on `backend`, which is `internal: true` and has no route off the host.
 - `caliban` also joins `edge`, a bridge with IP masquerading disabled. That is enough to publish 8080 and 8081, but containers on it cannot reach the internet.
 - For a hard guarantee, add host firewall rules as well (see the hardening checklist).
+
+**Single sign-on.** The console and admin API can sign people in against your own OpenID Connect provider (Keycloak, Entra ID, Okta, ADFS, Authentik, Dex and others), with roles: `owner`, `admin` and `auditor` for the whole deployment, `tenant_admin`, `developer`, `viewer` and `billing` per tenant. It is off by default. To turn it on:
+
+1. Register a confidential client at the provider with the redirect URI `https://<console host>/auth/callback` (core [`docs/sso.md`](https://github.com/thecalibanproject/core/blob/main/docs/sso.md) has Keycloak and Entra ID steps).
+2. In `.env`, set `CALIBAN_OIDC_ISSUER`, `CALIBAN_OIDC_CLIENT_ID`, `CALIBAN_OIDC_CLIENT_SECRET` and `CALIBAN_OIDC_REDIRECT_URL`, and put your own group in `CALIBAN_OIDC_OWNER_GROUPS` so the first owner can sign in. Optional: `CALIBAN_OIDC_SCOPES`, `CALIBAN_OIDC_GROUPS_CLAIM`, `CALIBAN_OIDC_API_AUDIENCE` (access tokens for CI and scripts), `CALIBAN_OIDC_CA_FILE` (internal PKI), `CALIBAN_OIDC_ADMIN_GROUPS` and `CALIBAN_OIDC_AUDITOR_GROUPS`. Tenant-scoped group mappings go in `[security.oidc]` of `config/caliban.toml`, or are granted in the console under **Users and roles**.
+3. Let the control plane reach the issuer: `caliban` has no route off the host by default, so add `docker-compose.byok-egress.yml` and restrict the egress bridge (or `CALIBAN_HTTPS_PROXY`) to the identity provider.
+4. `docker compose up -d`. Once an owner can sign in with SSO, keep `CALIBAN_ADMIN_TOKEN` offline as the break-glass credential (every use is audited), or set `CALIBAN_BREAK_GLASS=false` to refuse it.
+
+Serve the console over https (your TLS proxy) so the session cookie is `Secure`; the redirect URL's origin must be the one browsers use.
 
 **Smoke test options** (`scripts/smoke.sh`): `CALIBAN_URL`, `CALIBAN_ADMIN_URL`, `CALIBAN_ADMIN_TOKEN` (read from `compose/.env` if unset), `CALIBAN_API_KEY`, `MINT_KEY=1`, `TENANT` (default `default`), `MODEL` (default `caliban/auto`), `TIMEOUT` and `SKIP_CHAT=1`.
 
@@ -267,6 +276,7 @@ These are **estimates; benchmark per site.** The model-serving numbers come from
 - [ ] `CALIBAN_KEK` is 32 random bytes, stored in a vault, HSM or sealed secret, **backed up offline**, and never in git or Helm values (`auth.create=false`). Losing it makes every stored BYOK key and datasource credential unrecoverable.
 - [ ] You have a KEK rotation schedule (`CALIBAN_KEK_PREVIOUS`, `caliban keys rotate`; see `compose/.env.example`, the Helm README and the core README, "KEK rotation"), including after deleting a tenant, and retired KEKs are destroyed when the backups that predate the rotation expire.
 - [ ] `CALIBAN_ADMIN_TOKEN` is 32+ random bytes and rotated on staff changes.
+- [ ] With single sign-on, people sign in through it with roles, the admin token is kept offline as break-glass (or `CALIBAN_BREAK_GLASS=false`), the OIDC client secret is stored like the other secrets, and the console is served over https.
 - [ ] Postgres and Valkey have unique strong passwords. Postgres uses `scram-sha-256` and TLS (`sslmode=require`) when it runs off-host.
 - [ ] `.env` is `chmod 600` and owned by the service account.
 
