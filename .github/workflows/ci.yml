@@ -75,6 +75,36 @@ jobs:
           refused "${base[@]}" --set config.security.oidc.issuer=https://i   # configured twice
           # A base that renders, so the failures above are the checks, not the base.
           helm template caliban helm/caliban "${base[@]}" > /dev/null
+      - name: Model pools wait for embed and rerank (waitFor), skipping disabled pools
+        run: |
+          cat > /tmp/pools.yaml <<'EOF'
+          modelPools:
+            defaults:
+              weights: { existingClaim: caliban-models }
+            pools:
+              - { name: qwen3-large, enabled: true, waitFor: [embed, rerank, gpt-oss], args: [/models/a] }
+              - { name: gpt-oss, enabled: false, args: [/models/b] }
+              - { name: embed, enabled: true, command: [], args: [--port=8000] }
+              - { name: rerank, enabled: true, args: [/models/c] }
+          EOF
+          helm lint --strict helm/caliban -f /tmp/pools.yaml
+          out=$(helm template caliban helm/caliban -f /tmp/pools.yaml)
+          for want in 'name: wait-for-pools' '"http://embed:8000/health"' '"http://rerank:8000/health"' \
+              'name: caliban-pool-qwen3-large-wait' 'name: caliban-pool-qwen3-large-wait-ingress'; do
+            grep -qF -- "$want" <<<"$out" || { echo "::error::missing '$want'"; exit 1; }
+          done
+          if grep -qF 'gpt-oss:8000/health' <<<"$out"; then
+            echo "::error::a disabled pool must not be waited for"; exit 1
+          fi
+          if [ "$(grep -c 'name: wait-for-pools' <<<"$out")" != 1 ]; then
+            echo "::error::only qwen3-large should wait"; exit 1
+          fi
+          for bad in '[embd]' '[qwen3-large]'; do
+            sed "s/waitFor: \[embed, rerank, gpt-oss\]/waitFor: $bad/" /tmp/pools.yaml > /tmp/bad.yaml
+            if helm template caliban helm/caliban -f /tmp/bad.yaml > /dev/null 2>&1; then
+              echo "::error::waitFor $bad should fail the render"; exit 1
+            fi
+          done
 
   compose:
     name: Compose config

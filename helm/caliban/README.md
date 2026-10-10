@@ -228,7 +228,7 @@ serving one model: vLLM, SGLang, TEI or llama.cpp. `values.yaml` ships disabled 
 | Pool | What it serves | Hardware |
 |---|---|---|
 | `qwen3-small` | Qwen3.5-9B, online FP8 | 1 × 24 GB GPU |
-| `qwen3-large` | Qwen3.8-27B-FP8 | 1 × 48 GB GPU, or 1 × 80 GB at 262k context |
+| `qwen3-large` | Qwen3.8-27B-FP8 | 1 × 48 GB GPU (32k context when it shares the GPU with `embed` and `rerank`), or 1 × 80 GB at 262k context |
 | `qwen3-moe` | Qwen3.6-35B-A3B-FP8 | same as `qwen3-large` |
 | `qwen3-xl` | Qwen3.5-122B-A10B-FP8 on SGLang, TP2 | 2 × 80 GB |
 | `gpt-oss` | gpt-oss-20b | 1 GPU with 16 GB or more |
@@ -245,7 +245,7 @@ How pools behave:
   The PVC is mounted read-only at `/models`. `HF_HUB_OFFLINE=1` and the vLLM/HF telemetry
   opt-outs are set.
 - **Network.** Pools fall under the release's default-deny NetworkPolicy and get **no egress
-  rule at all**. Ingress is allowed only from the router/standalone pods
+  rule at all**, except cluster DNS and the waited-for pools for a pool with `waitFor` (below). Ingress is allowed only from the router/standalone pods
   (`<release>-ingress-model-pools`). The Caliban egress policy gets a matching rule
   automatically.
 - **Security.** Pods run as non-root (uid 1000, all capabilities dropped, seccomp
@@ -254,6 +254,26 @@ How pools behave:
 - **GPUs.** `gpus: N` sets the `nvidia.com/gpu` limit. GPU pools get the
   `nvidia.com/gpu:NoSchedule` toleration. The rollout strategy is `Recreate`, so no spare GPU
   is needed during a rollout.
+- **Start order (`waitFor`).** Kubernetes has no start order between Deployments, so a pool
+  can list other pools in `waitFor`: an init container, in the pool's own image (it needs
+  `python3`, which the vLLM and SGLang images have), polls their health endpoints through
+  their Services and starts the engine once all answer 200, or after `waitTimeoutSeconds`
+  (default 900) in any case, so a broken embedder delays the chat pool but cannot keep it
+  down. Pools that are disabled are skipped; a name that is not in `modelPools.pools` fails
+  the render. The chart adds a NetworkPolicy per waiting pool that allows cluster DNS and the
+  waited-for pools' port, and nothing else. In `values.yaml` the vLLM chat pools wait for
+  `embed` and `rerank`. This matters when they share a GPU (time-slicing or MPS): vLLM sizes
+  its KV cache from a memory profile taken at start, and in the second AWS run a 27B start
+  that profiled while the reranker was loading got 1.21 GiB of KV cache instead of 5.15 GiB
+  and crash-looped (core `bench/RESULTS-aws-2026-10b.md`). With whole GPUs per pool it only
+  delays the chat pool by the small models' load time; set `waitFor: []` to skip it.
+- **One 48 GB GPU for chat, embed and rerank.** The example pools assume a GPU each. To share
+  one 48 GB card the way compose does, use the budget measured on an L40S: `qwen3-large` with
+  `--gpu-memory-utilization=0.82` and `--max-model-len=32768` (and `context_window: 32768`
+  for `local/qwen3.8-27b` in `config.models`), `rerank` with `--gpu-memory-utilization=0.10`,
+  and about 1.5 GB for TEI. At 131072 one full-length sequence needs 4.31 GiB of a KV cache
+  of about 5 GiB, too little margin to start reliably; 32768 refuses longer requests in
+  exchange. Keep `waitFor: [embed, rerank]` on the chat pool.
 - **Mirrors.** With `global.imageRegistry`, the source registry host is dropped
   (`ghcr.io/x/y` → `<mirror>/x/y`), which matches `airgap/load.sh --registry`.
 

@@ -211,7 +211,7 @@ Every pod runs as non-root (uid 65532) with a read-only root filesystem, all cap
 
 In both modes router pods get no `CALIBAN_ADMIN_TOKEN` and no `CALIBAN_DATABASE_URL`: core reads them only when it builds the control plane. Global `extraEnv` still applies to every Caliban pod; use `router.extraEnv`, `controlPlane.extraEnv` or `standalone.extraEnv` for anything that must stay on one component.
 
-**Model pools.** `modelPools.pools` renders one Deployment and Service per enabled pool (vLLM, SGLang, TEI or llama.cpp; examples in `values.yaml` are disabled). Weights come read-only from a PVC with the bundle's `models/` layout; pools get no egress, accept ingress only from Caliban, request `nvidia.com/gpu` via `gpus: N`, and roll out with `Recreate`. You can also run vLLM, SGLang, llm-d or NVIDIA Dynamo yourself and list them in `networkPolicy.egress.localModels`.
+**Model pools.** `modelPools.pools` renders one Deployment and Service per enabled pool (vLLM, SGLang, TEI or llama.cpp; examples in `values.yaml` are disabled). Weights come read-only from a PVC with the bundle's `models/` layout; pools get no egress (beyond the in-release health checks of `waitFor`), accept ingress only from Caliban, request `nvidia.com/gpu` via `gpus: N`, and roll out with `Recreate`. The vLLM chat pools wait for the `embed` and `rerank` pools to be ready before they start (`waitFor`), which matters when they share a GPU. You can also run vLLM, SGLang, llm-d or NVIDIA Dynamo yourself and list them in `networkPolicy.egress.localModels`.
 
 ## Air-gapped
 

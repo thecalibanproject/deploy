@@ -201,6 +201,9 @@ config:
 # qwen3-large (262k context), one >= 16 GB for gpt-oss, and two small ones (>= 8 GB) for embed
 # and rerank. With fewer GPUs, disable gpt-oss, or run embed on the TEI cpu-1.9.4 image with
 # gpus: 0 (rerank then needs the bge-reranker-v2-m3 TEI pool instead; see values.yaml).
+# The chat pools have their GPUs to themselves here, so they do not wait for embed and rerank.
+# If you share a GPU between them (time-slicing or MPS), add `waitFor: [embed, rerank]` to the
+# chat pools and use the shared-GPU budget described in values.yaml (modelPools.pools).
 modelPools:
   defaults:
     weights:

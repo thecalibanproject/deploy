@@ -507,6 +507,8 @@ modelPools:
       allowPrivilegeEscalation: false
       privileged: false
       capabilities: { drop: [ALL] }
+    # How long a pool with waitFor waits for those pools to be ready before it starts anyway.
+    waitTimeoutSeconds: 900
     probes:
       # Model load can take many minutes (up to 30 here) on first start.
       startup:   { periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 180 }
@@ -516,11 +518,25 @@ modelPools:
   # Per-pool fields: name (required; = Service name), enabled, serviceName, image{}, command,
   # args, port, gpus, gpuResourceName, resources, env (appended to defaults), weights{},
   # replicas, nodeSelector, tolerations, affinity, shmSize, cacheSize, healthPath,
-  # podSecurityContext, securityContext, podAnnotations, podLabels.
+  # podSecurityContext, securityContext, podAnnotations, podLabels, waitFor, waitTimeoutSeconds.
+  #
+  # waitFor: pools (by name) that must be ready before this pool's engine starts. An init
+  # container in the pool's own image (needs python3: vLLM, SGLang) polls their health
+  # endpoints, then starts anyway after waitTimeoutSeconds; disabled pools are skipped. The
+  # vLLM chat pools wait for embed and rerank: when they share a GPU (time-slicing or MPS),
+  # vLLM must take its memory profile after the small models have loaded, or its KV cache comes
+  # out too small (core bench/RESULTS-aws-2026-10b.md). On dedicated GPUs it only delays the
+  # chat pool's start by the small models' load time; set `waitFor: []` to skip it.
+  #
+  # One 48 GB GPU shared by qwen3-large, embed and rerank (as compose does) needs the compose
+  # budget, measured on an L40S: qwen3-large --gpu-memory-utilization=0.82 and
+  # --max-model-len=32768 (context_window 32768 in config.models), rerank 0.10, and TEI about
+  # 1.5 GB. The defaults below assume each pool has its own GPU.
   pools:
     # 1×24 GB: Qwen3.5-9B (Apache-2.0), online FP8, text-only, 128k context.
     - name: qwen3-small
       enabled: false
+      waitFor: [embed, rerank]
       args:
         - /models/qwen3.5-9b
         - --served-model-name=Qwen/Qwen3.5-9B
@@ -533,9 +549,11 @@ modelPools:
         - --reasoning-parser=qwen3
         - --enable-auto-tool-choice
         - --tool-call-parser=qwen3_coder
-    # 1×48 GB (131072 ctx, fp8 KV) or 1×80 GB (raise to 262144): Qwen3.8-27B-FP8 (Apache-2.0).
+    # 1×48 GB to itself (131072 ctx, fp8 KV) or 1×80 GB (raise to 262144): Qwen3.8-27B-FP8
+    # (Apache-2.0). Sharing the 48 GB GPU with embed and rerank: 0.82 and 32768 (see above).
     - name: qwen3-large
       enabled: false
+      waitFor: [embed, rerank]
       args:
         - /models/qwen3.8-27b-fp8
         - --served-model-name=Qwen/Qwen3.8-27B-FP8
@@ -553,6 +571,7 @@ modelPools:
     # Throughput tier: Qwen3.6-35B-A3B-FP8 (MoE, 3B active; Apache-2.0).
     - name: qwen3-moe
       enabled: false
+      waitFor: [embed, rerank]
       args:
         - /models/qwen3.6-35b-a3b-fp8
         - --served-model-name=Qwen/Qwen3.6-35B-A3B-FP8
@@ -586,6 +605,7 @@ modelPools:
     # gpt-oss-20b (Apache-2.0). Needs the tiktoken encodings next to the weights.
     - name: gpt-oss
       enabled: false
+      waitFor: [embed, rerank]
       env:
         - { name: TIKTOKEN_ENCODINGS_BASE, value: /models/tiktoken }
       args:

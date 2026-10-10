@@ -5,7 +5,8 @@
 {{- range .Values.modelPools.pools }}{{- if .enabled }}{{- $poolPorts = append $poolPorts (int (.port | default $.Values.modelPools.defaults.port)) }}{{- end }}{{- end }}
 {{- $poolPorts = uniq $poolPorts }}
 # 1) Default deny: every Caliban pod (including model pools), all ingress and all egress.
-#    Model pools get no egress rule at all below: inference engines never reach the network.
+#    Model pools get no egress rule below, except a pool with waitFor (7): cluster DNS and
+#    the health port of the pools it waits for. No pool ever reaches outside the release.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -176,6 +177,81 @@ spec:
         {{- end }}
       ports:
         - { port: http, protocol: TCP }
+{{- end }}
+{{- range $pool := .Values.modelPools.pools }}
+{{- if $pool.enabled }}
+{{- $targets := (include "caliban.poolWaitTargets" (dict "root" $ "pool" $pool) | fromJson).targets }}
+{{- if $targets }}
+{{- $names := list }}{{- $ports := list }}
+{{- range $targets }}{{- $names = append $names .name }}{{- $ports = append $ports (int .port) }}{{- end }}
+---
+# 7) Start order for the {{ $pool.name }} pool (waitFor): its init container polls the health
+#    endpoints of {{ join ", " $names }} before the engine starts.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-pool-{{ $pool.name }}-wait
+  labels:
+    {{- include "caliban.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: model-pool
+      caliban.io/pool: {{ $pool.name }}
+  policyTypes: [Egress]
+  egress:
+    {{- if $np.egress.dns.enabled }}
+    - to:
+        - namespaceSelector:
+            {{- toYaml $np.egress.dns.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.egress.dns.podSelector | nindent 12 }}
+      ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: model-pool
+            matchExpressions:
+              - key: caliban.io/pool
+                operator: In
+                values: {{ toJson $names }}
+      ports:
+        {{- range (uniq $ports) }}
+        - { port: {{ . }}, protocol: TCP }
+        {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-pool-{{ $pool.name }}-wait-ingress
+  labels:
+    {{- include "caliban.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: model-pool
+    matchExpressions:
+      - key: caliban.io/pool
+        operator: In
+        values: {{ toJson $names }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: model-pool
+              caliban.io/pool: {{ $pool.name }}
+      ports:
+        - { port: http, protocol: TCP }
+{{- end }}
+{{- end }}
 {{- end }}
 {{- if and .Values.sso.enabled $np.egress.identityProvider }}
 ---

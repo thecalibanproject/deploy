@@ -539,3 +539,36 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end -}}
+
+{{/* ───────────── model pool start order ───────────── */}}
+
+{{- /*
+  The pools a model pool waits for before its engine starts (modelPools.pools[].waitFor), as
+  JSON {"targets": [{"name", "service", "port", "health"}]}. Names must be pools of this chart;
+  pools that are disabled are skipped, so the same waitFor works whichever pools are enabled.
+  Input: dict "root" $ "pool" <pool>.
+*/ -}}
+{{- define "caliban.poolWaitTargets" -}}
+{{- $root := .root }}
+{{- $pool := .pool }}
+{{- $d := $root.Values.modelPools.defaults }}
+{{- $targets := list }}
+{{- range $want := ($pool.waitFor | default list) }}
+{{- if eq $want $pool.name }}
+{{- fail (printf "modelPools pool %q: waitFor lists the pool itself" $pool.name) }}
+{{- end }}
+{{- $found := false }}
+{{- range $other := $root.Values.modelPools.pools }}
+{{- if eq $other.name $want }}
+{{- $found = true }}
+{{- if $other.enabled }}
+{{- $targets = append $targets (dict "name" $other.name "service" ($other.serviceName | default $other.name) "port" ($other.port | default $d.port | int) "health" ($other.healthPath | default $d.healthPath)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $found }}
+{{- fail (printf "modelPools pool %q: waitFor names %q, which is not in modelPools.pools" $pool.name $want) }}
+{{- end }}
+{{- end }}
+{{- dict "targets" $targets | toJson }}
+{{- end -}}

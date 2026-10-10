@@ -44,6 +44,7 @@
 {{- $env := concat ($d.env | default list) ($pool.env | default list) }}
 {{- $health := $pool.healthPath | default $d.healthPath }}
 {{- $labels := dict "app.kubernetes.io/component" "model-pool" "caliban.io/pool" $name }}
+{{- $waitTargets := (include "caliban.poolWaitTargets" (dict "root" $root "pool" $pool) | fromJson).targets }}
 {{- if and $w.create (not $w.existingClaim) }}
 ---
 apiVersion: v1
@@ -107,6 +108,45 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml ($pool.podSecurityContext | default $d.podSecurityContext) | nindent 8 }}
+      {{- if $waitTargets }}
+      # Start order (waitFor): on a GPU shared with these pools, vLLM must take its memory
+      # profile after they have loaded, or its KV cache comes out too small. Polls their
+      # health endpoints through the Services; after waitTimeoutSeconds it starts anyway.
+      # Runs the pool's own image, which needs python3 (vLLM and SGLang images have it).
+      initContainers:
+        - name: wait-for-pools
+          image: {{ $image | quote }}
+          imagePullPolicy: {{ $img.pullPolicy | default "IfNotPresent" }}
+          command:
+            - python3
+            - -c
+            - |
+              import sys, time, urllib.request
+              timeout, urls = int(sys.argv[1]), sys.argv[2:]
+              deadline = time.monotonic() + timeout
+              while urls and time.monotonic() < deadline:
+                  for url in list(urls):
+                      try:
+                          if urllib.request.urlopen(url, timeout=3).status == 200:
+                              print("ready:", url, flush=True)
+                              urls.remove(url)
+                      except Exception:
+                          pass
+                  if urls:
+                      time.sleep(5)
+              for url in urls:
+                  print("not ready after", timeout, "s, starting anyway:", url, flush=True)
+          args:
+            - {{ $pool.waitTimeoutSeconds | default $d.waitTimeoutSeconds | default 900 | quote }}
+            {{- range $waitTargets }}
+            - {{ printf "http://%s:%d%s" .service (int .port) .health | quote }}
+            {{- end }}
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            {{- toYaml ($pool.securityContext | default $d.securityContext) | nindent 12 }}
+      {{- end }}
       containers:
         - name: engine
           image: {{ $image | quote }}
