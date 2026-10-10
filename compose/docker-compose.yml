@@ -143,15 +143,25 @@ services:
       # TCP_NODELAY on accepted connections, on by default: on Linux, Nagle plus delayed ACK added
       # 24 to 50 ms to the first streamed token (core bench/RESULTS-aws-2026-10.md). 0 = off.
       CALIBAN_TCP_NODELAY: ${CALIBAN_TCP_NODELAY:-1}
-      # Usage events reach Postgres through core's batching shipper. This stack gives it no spool
-      # directory (read-only root, Postgres on the same host), so events written while Postgres
-      # is down wait in memory and core warns about that at start. GET /metrics on 8080 is
-      # unauthenticated (no tenant data); block it at your TLS proxy.
+      # Usage events reach Postgres through core's batching shipper. Events written while Postgres
+      # is down wait in this spool (the usage-spool volume; core makes the directory 0700) and
+      # are delivered, counted once, when it is back. The image owns /var/lib/caliban/usage as
+      # 65532, so the volume is writable while the root filesystem stays read-only. GET /metrics
+      # on 8080 is unauthenticated (no tenant data); block it at your TLS proxy.
+      CALIBAN_USAGE_SPOOL_DIR: /var/lib/caliban/usage/spool
+      # Node runs (core docs/nodes.md) execute in this process, on the Postgres journal, and need
+      # CALIBAN_KEK (set above). Compose runs no separate `caliban worker`: that is split mode
+      # (Helm chart, or README "Node runs"). Values below are core's defaults; set them in .env.
+      CALIBAN_NODE_SYNC_WAIT_SECS: ${CALIBAN_NODE_SYNC_WAIT_SECS:-60}
+      CALIBAN_NODE_LEASE_SECS: ${CALIBAN_NODE_LEASE_SECS:-30}
+      CALIBAN_NODE_POLL_MS: ${CALIBAN_NODE_POLL_MS:-500}
+      CALIBAN_NODE_MAX_RUNS: ${CALIBAN_NODE_MAX_RUNS:-64}
       # Telemetry stays off unless you point this at your own collector.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:
       - ./config/caliban.toml:/etc/caliban/caliban.toml:ro
       - ${CALIBAN_PII_MODEL_DIR:-./models/pii}:/models/pii:ro
+      - usage-spool:/var/lib/caliban/usage
     ports:
       - "${CALIBAN_BIND:-127.0.0.1}:${CALIBAN_ROUTER_PORT:-8080}:8080"
       - "${CALIBAN_BIND:-127.0.0.1}:${CALIBAN_CP_PORT:-8081}:8081"
@@ -545,6 +555,8 @@ networks:
 
 volumes:
   pgdata:
+  # Undelivered usage events of the caliban service (CALIBAN_USAGE_SPOOL_DIR).
+  usage-spool:
   qdrant-data:
   qdrant-snapshots:
   valkey-data:

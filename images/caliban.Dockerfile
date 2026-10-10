@@ -3,7 +3,7 @@
 # The frontend built into Docker Engine >= 24 supports everything used here
 # (RUN --mount=type=cache, COPY --chmod).
 #
-# Caliban: one image, one binary (`caliban router | control-plane | standalone | keygen`)
+# Caliban: one image, one binary (`caliban router | control-plane | worker | standalone | keygen`)
 # plus the static admin console.
 #
 # Build context = the PARENT directory that holds the sibling repos (~/caliban):
@@ -86,6 +86,12 @@ RUN set -eu; \
       rm -rf /var/lib/apt/lists/*; \
     fi
 
+# State directory for the runtime image (distroless has no shell to create it there):
+# /var/lib/caliban and /var/lib/caliban/usage, owned by 65532, mode 0700. A named volume mounted
+# on either path starts with that owner, so the read-only root filesystem can stay read-only
+# while the usage spool and the snapshot cache are writable (compose; Helm mounts emptyDirs).
+RUN mkdir -p /out/state/usage
+
 COPY core/ ./
 
 # Cache mounts speed up repeated builds; the binary is copied out of the cache to /out.
@@ -123,6 +129,7 @@ LABEL org.opencontainers.image.title="caliban" \
 
 COPY --from=core --chown=0:0 --chmod=0755 /out/caliban /usr/local/bin/caliban
 COPY --from=web  --chown=0:0 /src/web/dist /usr/share/caliban/web
+COPY --from=core --chown=65532:65532 --chmod=0700 /out/state /var/lib/caliban
 
 # Telemetry is OFF unless OTEL_EXPORTER_OTLP_ENDPOINT is set by the operator.
 ENV CALIBAN_CONFIG=/etc/caliban/caliban.toml \
@@ -131,6 +138,7 @@ ENV CALIBAN_CONFIG=/etc/caliban/caliban.toml \
 
 # distroless "nonroot" = uid/gid 65532. The root filesystem can be mounted read-only.
 USER 65532:65532
-EXPOSE 8080 8081
+# 8080 data plane, 8081 control plane, 8082 node worker (`caliban worker`).
+EXPOSE 8080 8081 8082
 ENTRYPOINT ["/usr/local/bin/caliban"]
 CMD ["standalone"]

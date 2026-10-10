@@ -240,6 +240,22 @@ jobs:
             jq -e --arg w "$want" '.services["qwen3-large"].command | index($w)' <<<"$cfg" > /dev/null \
               || { echo "::error::qwen3-large should default to $want"; exit 1; }
           done
+      - name: Standalone keeps its usage spool on a volume and gets numeric node settings
+        run: |
+          cfg=$(docker compose -f compose/docker-compose.yml config --format json)
+          check() { jq -e "$1" <<<"$cfg" > /dev/null || { echo "::error::$2"; exit 1; }; }
+          check '.services.caliban.read_only == true' 'caliban must keep a read-only root filesystem'
+          check '.services.caliban.environment.CALIBAN_USAGE_SPOOL_DIR == "/var/lib/caliban/usage/spool"' \
+            'CALIBAN_USAGE_SPOOL_DIR'
+          check '[.services.caliban.volumes[] | select(.type == "volume" and .source == "usage-spool"
+            and .target == "/var/lib/caliban/usage")] | length == 1' 'the usage-spool volume'
+          # Core rejects empty numbers, so every node setting has a value even without .env.
+          for v in CALIBAN_NODE_SYNC_WAIT_SECS CALIBAN_NODE_LEASE_SECS CALIBAN_NODE_POLL_MS CALIBAN_NODE_MAX_RUNS; do
+            check ".services.caliban.environment.$v | test(\"^[0-9]+\$\")" "$v must be a number"
+          done
+          # The image owns the volume's mount point, so the spool is writable without root.
+          grep -qF 'COPY --from=core --chown=65532:65532 --chmod=0700 /out/state /var/lib/caliban' \
+            images/caliban.Dockerfile || { echo "::error::the image must own /var/lib/caliban"; exit 1; }
 
   shell:
     name: Shellcheck and Dockerfile check
