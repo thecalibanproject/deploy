@@ -143,6 +143,10 @@ services:
       # TCP_NODELAY on accepted connections, on by default: on Linux, Nagle plus delayed ACK added
       # 24 to 50 ms to the first streamed token (core bench/RESULTS-aws-2026-10.md). 0 = off.
       CALIBAN_TCP_NODELAY: ${CALIBAN_TCP_NODELAY:-1}
+      # Usage events reach Postgres through core's batching shipper. This stack gives it no spool
+      # directory (read-only root, Postgres on the same host), so events written while Postgres
+      # is down wait in memory and core warns about that at start. GET /metrics on 8080 is
+      # unauthenticated (no tenant data); block it at your TLS proxy.
       # Telemetry stays off unless you point this at your own collector.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes:

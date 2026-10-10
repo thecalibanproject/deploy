@@ -312,3 +312,23 @@ against 77 ms; 29.7 ms and 103 req/s on 8 vCPU with 2 threads per session, core
 (`router.nodeSelector: { kubernetes.io/arch: amd64 }`). The chart sets no `CALIBAN_PII_NER_*`
 variables, so core's defaults apply; to override them, set both `CALIBAN_PII_NER_SESSIONS` and
 `CALIBAN_PII_NER_THREADS` in `router.extraEnv`.
+
+## Metrics
+
+The data plane serves `GET /metrics` (Prometheus text format) on its public port, 8080 on
+routers and standalone, **without authentication**, like `/healthz`. It carries the snapshot
+version and KEK ids (`caliban_snapshot_info`) and the usage WAL and shipping counters
+(`caliban_usage_shipped_total`, `caliban_usage_ship_dropped_total`,
+`caliban_usage_ship_errors_total`, `caliban_usage_ship_backlog`, ...); no tenant data, and no
+request, latency or quota metrics yet. The control plane has none.
+
+The chart ships no ServiceMonitor or scrape annotations. To scrape it:
+- with the Prometheus Operator, a ServiceMonitor selecting the router Service
+  (`app.kubernetes.io/component: router`) on port `http`, path `/metrics`; or annotations
+  through `router.podAnnotations` if your Prometheus uses them;
+- if `networkPolicy.ingress.router` is restricted, add your Prometheus namespace to it.
+
+If an ingress or TLS proxy publishes the router to clients, block `/metrics` there: the
+backlog and snapshot version are operational details clients do not need. Alert on
+`caliban_usage_ship_backlog` growing (control plane unreachable or refusing events) and on
+`caliban_usage_ship_dropped_total` increasing (spool full, events lost).
