@@ -11,6 +11,18 @@ Routers read the ConfigMap (router.mode=static): tenants, keys and routes create
 console or admin API do NOT reach them. Keep them in `config`, or use router.mode=snapshot.
 {{- end }}
 
+{{- if eq (include "caliban.workersEnabled" .) "true" }}
+
+Node runs: routers forward them to {{ .Values.worker.replicas }} node worker(s) at {{ include "caliban.workerUrl" . }}.
+Upgrade order for this release: control plane (it owns the migrations; workers refuse a schema
+they do not match), then routers, then workers. Publish no node before every router runs this
+release: older routers refuse snapshots with nodes and keep serving their last good one.
+{{- else if eq .Values.mode "split" }}
+
+Node runs are off: no node worker (worker.replicas=0, or router.mode=static). Routers answer
+the run API with 503.
+{{- end }}
+
 Image: {{ include "caliban.image" . }}
 
 Endpoints (in-cluster):
@@ -51,6 +63,12 @@ Secrets this release reads (create them first unless auth.create=true):
 {{- else }}
   {{ include "caliban.snapshotSecretName" . }}  keys: {{ .Values.snapshotKeys.signingKeyKey }}, {{ .Values.snapshotKeys.routerTokenKey }} (control plane)
   {{ include "caliban.snapshotRouterSecretName" . }}  keys: {{ .Values.snapshotKeys.publicKeyKey }}, {{ .Values.snapshotKeys.routerTokenKey }} (routers)
+{{- end }}
+{{- end }}
+{{- if eq (include "caliban.workersEnabled" .) "true" }}
+  {{ include "caliban.workerTokenSecretName" . }}  key: {{ .Values.worker.token.key }}{{ if not .Values.worker.token.existingSecret }} (created by the chart){{ end }}
+{{- with .Values.worker.database.existingSecret }}
+  {{ . }}  key: {{ $.Values.worker.database.urlKey | default $.Values.database.urlKey }} (workers: DML-only database role)
 {{- end }}
 {{- end }}
 {{- with .Values.providerKeys.existingSecret }}

@@ -90,7 +90,8 @@ jobs:
           helm lint --strict helm/caliban -f /tmp/pools.yaml
           out=$(helm template caliban helm/caliban -f /tmp/pools.yaml)
           for want in 'name: wait-for-pools' '"http://embed:8000/health"' '"http://rerank:8000/health"' \
-              'name: caliban-pool-qwen3-large-wait' 'name: caliban-pool-qwen3-large-wait-ingress'; do
+              'name: caliban-pool-qwen3-large-wait' 'name: caliban-pool-qwen3-large-wait-ingress' \
+              'values: [router, worker, standalone]'; do
             grep -qF -- "$want" <<<"$out" || { echo "::error::missing '$want'"; exit 1; }
           done
           if grep -qF 'gpt-oss:8000/health' <<<"$out"; then
@@ -123,6 +124,82 @@ jobs:
           fi
           out=$(helm template caliban helm/caliban --set usageSpool.enabled=false)
           if grep -qF 'CALIBAN_USAGE_SPOOL_DIR' <<<"$out"; then echo "::error::usageSpool.enabled=false"; exit 1; fi
+
+      - name: Node workers in split mode only, with their own token, network policies and database
+        run: |
+          has() { grep -qF -- "$2" <<<"$1" || { echo "::error::missing '$2' ($3)"; exit 1; }; }
+          hasnt() { if grep -qF -- "$2" <<<"$1"; then echo "::error::unexpected '$2' ($3)"; exit 1; fi; }
+          part() { awk -v f="$2" '$0 ~ "^# Source: caliban/templates/"f {p=1; next} /^---/ {p=0} p' <<<"$1"; }
+          out=$(helm template caliban helm/caliban)
+          for want in 'name: caliban-worker' 'name: caliban-worker-token' 'name: caliban-ingress-worker' \
+              'name: caliban-egress-router-worker'; do
+            has "$out" "$want" default
+          done
+          worker=$(part "$out" deployment-worker.yaml)
+          for want in '- worker' 'containerPort: 8082' 'httpGet: { path: /healthz, port: worker }' \
+              'name: CALIBAN_DATABASE_URL' 'name: CALIBAN_WORKER_TOKEN' 'name: CALIBAN_WORKER_ID' \
+              'fieldPath: metadata.name' 'name: CALIBAN_SNAPSHOT_PUBLIC_KEY' \
+              'value: "http://caliban-control-plane:8081"' 'value: /var/lib/caliban/usage/spool' \
+              'value: /var/lib/caliban/snapshot.json' 'readOnlyRootFilesystem: true'; do
+            has "$worker" "$want" worker
+          done
+          for not in CALIBAN_ADMIN_TOKEN CALIBAN_SNAPSHOT_SIGNING_KEY CALIBAN_CONFIG CALIBAN_ROUTER_ID; do
+            hasnt "$worker" "$not" worker
+          done
+          router=$(part "$out" deployment-router.yaml)
+          has "$router" 'value: "http://caliban-worker:8082"' router
+          has "$router" 'name: CALIBAN_WORKER_TOKEN' router
+          hasnt "$router" 'CALIBAN_DATABASE_URL' router
+          # Standalone runs nodes in-process; static routers have no snapshots; 0 turns them off.
+          for extra in mode=standalone router.mode=static worker.replicas=0; do
+            out=$(helm template caliban helm/caliban --set "$extra")
+            hasnt "$out" 'component: worker' "$extra"
+            hasnt "$out" 'CALIBAN_WORKER_' "$extra"
+          done
+          # A DML-only database role and an existing token Secret; node settings reach every user.
+          out=$(helm template caliban helm/caliban --set worker.database.existingSecret=caliban-worker-db \
+            --set worker.database.urlKey=uri --set worker.token.existingSecret=caliban-worker \
+            --set nodes.syncWaitSeconds=90 --set nodes.leaseSeconds=20 --set nodes.maxRuns=16)
+          hasnt "$out" 'kind: Secret' existing-token
+          worker=$(part "$out" deployment-worker.yaml)
+          has "$worker" 'name: caliban-worker-db' worker-db
+          has "$worker" 'key: uri' worker-db
+          has "$worker" 'name: caliban-worker' worker-token
+          has "$worker" 'name: CALIBAN_NODE_LEASE_SECS' nodes
+          has "$(part "$out" deployment-router.yaml)" 'value: "90"' nodes
+          hasnt "$(part "$out" deployment-router.yaml)" 'CALIBAN_NODE_LEASE_SECS' nodes
+          hasnt "$(part "$out" deployment-control-plane.yaml)" 'CALIBAN_NODE_' nodes
+          has "$(helm template caliban helm/caliban --set mode=standalone --set nodes.maxRuns=16)" \
+            'name: CALIBAN_NODE_MAX_RUNS' standalone
+      - name: More than one worker needs Valkey (the shared Idempotency-Key store)
+        run: |
+          helm lint --strict helm/caliban --set worker.replicas=3
+          helm template caliban helm/caliban --set worker.replicas=3 > /dev/null
+          helm template caliban helm/caliban --set worker.replicas=2 --set valkey.url= \
+            --set valkey.existingSecret=caliban-valkey > /dev/null
+          for bad in valkey.url= config.limits.store=memory; do
+            if helm template caliban helm/caliban --set worker.replicas=2 --set "$bad" > /dev/null 2>&1; then
+              echo "::error::worker.replicas=2 with $bad should fail the render"; exit 1
+            fi
+          done
+          # One worker needs no shared store.
+          helm template caliban helm/caliban --set config.limits.store=memory > /dev/null
+      - name: ServiceMonitor is off by default and scrapes routers and workers
+        run: |
+          has() { grep -qF -- "$2" <<<"$1" || { echo "::error::missing '$2' ($3)"; exit 1; }; }
+          if helm template caliban helm/caliban | grep -qF 'kind: ServiceMonitor'; then
+            echo "::error::the ServiceMonitor must be off by default"; exit 1
+          fi
+          helm lint --strict helm/caliban --set metrics.serviceMonitor.enabled=true
+          out=$(helm template caliban helm/caliban --set metrics.serviceMonitor.enabled=true \
+            --set metrics.serviceMonitor.labels.release=kube-prometheus)
+          for want in 'kind: ServiceMonitor' '- port: http' '- port: worker' 'path: /metrics' \
+              'release: kube-prometheus' 'values: [router, worker]'; do
+            has "$out" "$want" split
+          done
+          out=$(helm template caliban helm/caliban --set metrics.serviceMonitor.enabled=true --set mode=standalone)
+          has "$out" '- port: http' standalone
+          if grep -qF -- '- port: worker' <<<"$out"; then echo "::error::standalone has no worker"; exit 1; fi
 
   compose:
     name: Compose config

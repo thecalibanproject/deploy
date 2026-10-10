@@ -1,0 +1,12 @@
+{{- if eq (include "caliban.workersEnabled" .) "true" }}
+{{- if gt (int .Values.worker.replicas) 1 }}
+{{- /* A model call in flight when its worker dies is replayed by another worker with the same
+       Idempotency-Key; only the shared store (Valkey) lets that worker get the stored answer
+       instead of calling the model again. */}}
+{{- $store := dig "limits" "store" "" .Values.config }}
+{{- if not (and (eq (toString $store) "valkey") (or .Values.valkey.url .Values.valkey.existingSecret)) }}
+{{- fail "worker.replicas > 1 needs Valkey: set config.limits.store=valkey and valkey.url or valkey.existingSecret. Several workers deduplicate in-flight model calls only through the shared Idempotency-Key store (core docs/nodes.md)." }}
+{{- end }}
+{{- end }}
+{{ include "caliban.deployment" (dict "root" . "component" "worker" "values" .Values.worker) }}
+{{- end }}

@@ -41,3 +41,27 @@ spec:
       port: {{ .Values.controlPlane.service.port }}
       targetPort: admin
       protocol: TCP
+{{- if eq (include "caliban.workersEnabled" .) "true" }}
+---
+# Node workers: the run API for the routers (CALIBAN_WORKER_URLS), /healthz and /metrics.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "caliban.fullname" . }}-worker
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  {{- with .Values.worker.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "caliban.componentLabels" (dict "root" . "component" "worker") | nindent 4 }}
+  ports:
+    - name: worker
+      port: {{ .Values.worker.service.port }}
+      targetPort: worker
+      protocol: TCP
+{{- end }}

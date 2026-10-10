@@ -14,8 +14,10 @@ fullnameOverride: ""
 
 # split:      router Deployment (stateless, HPA-ready) + control-plane Deployment. Routers
 #             get their config from the control plane's signed snapshots by default
-#             (router.mode below), which needs the snapshotKeys Secret.
-# standalone: one Deployment running `caliban standalone` (both ports). Small sites.
+#             (router.mode below), which needs the snapshotKeys Secret. Node runs execute on
+#             the node worker Deployment (worker below), which routers forward them to.
+# standalone: one Deployment running `caliban standalone` (both ports). Small sites. Node runs
+#             execute in that process: no worker Deployment.
 mode: split
 
 image:
@@ -186,13 +188,40 @@ usageSpool:
   enabled: true
   sizeLimit: 512Mi
 
+# Node runs (core docs/nodes.md, "Where runs execute"). Empty = core's default. Each value is set
+# on every pod that uses it: routers, workers and standalone for syncWaitSeconds (a router waits
+# for its worker this long plus 30 s, so keep them equal), workers and standalone for the rest.
+nodes:
+  # CALIBAN_NODE_SYNC_WAIT_SECS: longest a sync run request waits before it answers 202 with the
+  # run so far (core default 60).
+  syncWaitSeconds: ""
+  # CALIBAN_NODE_LEASE_SECS: lease on a running run, renewed every third of it; a worker that
+  # dies loses its runs to another worker this long after its last renewal (core default 30).
+  leaseSeconds: ""
+  # CALIBAN_NODE_POLL_MS: how often an idle worker looks for runnable runs (core default 500).
+  pollMs: ""
+  # CALIBAN_NODE_MAX_RUNS: runs one process executes at once (core default 64).
+  maxRuns: ""
+
+# Prometheus Operator scraping. GET /metrics is served without authentication on the data-plane
+# port of routers and standalone (8080) and on the worker port (8082); core's control plane has
+# no /metrics yet, so it is not scraped. Workers accept only routers by default: add your
+# Prometheus to networkPolicy.ingress.worker (and to ingress.router if you restrict that).
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels, e.g. the release label your Prometheus selects ServiceMonitors by.
+    labels: {}
+
 # Telemetry is OFF unless an endpoint is set. Point it at YOUR collector only.
 otel:
   endpoint: ""
 
-# Added to EVERY Caliban pod (router, control plane, standalone). Use the per-component
-# router.extraEnv / controlPlane.extraEnv / standalone.extraEnv for anything that must not
-# reach the routers.
+# Added to EVERY Caliban pod (router, control plane, worker, standalone). Use the per-component
+# router.extraEnv / controlPlane.extraEnv / worker.extraEnv / standalone.extraEnv for anything
+# that must not reach the routers.
 extraEnv: []
 # - name: FOO
 #   value: bar
@@ -441,6 +470,59 @@ controlPlane:
   affinity: {}
   topologySpreadConstraints: []
   terminationGracePeriodSeconds: 30
+
+# Node workers (`caliban worker`, core docs/nodes.md): mode=split with router.mode=snapshot only.
+# Routers hold no database, so they forward the run API (POST /v1/nodes/{name}/runs,
+# /v1/runs/...) to the worker Service (CALIBAN_WORKER_URLS) with the worker token. Workers poll
+# the control plane's signed snapshots like routers, run the node journal in Postgres (claims,
+# leases, takeover when a worker dies), make their model calls through their own pipeline and
+# ship usage to the control plane like routers. Standalone runs nodes in-process instead, and
+# router.mode=static has no snapshots, so neither renders workers.
+#
+# replicas: 1 by default, so a published node runs on a split install without more setup (the
+# routers answer the run API with 503 when there is no worker). 0 turns node runs off: no
+# worker, no worker Service or token, and routers answer 503. More than 1 needs the shared
+# Idempotency-Key store (config.limits.store: valkey and valkey.url / valkey.existingSecret):
+# a model call in flight when its worker dies is replayed by another worker, and only Valkey
+# lets that worker get the stored answer instead of paying twice. The chart refuses the render
+# otherwise.
+worker:
+  replicas: 1
+  args: [worker]
+  # Shared secret on router-to-worker requests (CALIBAN_WORKER_TOKEN on both sides; workers
+  # also check the caller's API key). Empty existingSecret: the chart creates
+  # <fullname>-worker-token with a random token and keeps it across upgrades (lookup; kept on
+  # uninstall). Tools that render with `helm template` (Argo CD, Flux with post-rendering)
+  # cannot look it up and would rotate it on every render: give them an existing Secret:
+  #   kubectl create secret generic caliban-worker --from-literal=worker-token="$(openssl rand -hex 32)"
+  token:
+    existingSecret: ""
+    key: worker-token
+  # Postgres DSN for the node journal. Empty = database.existingSecret / database.urlKey. Workers
+  # need DML only (no DDL): the control plane owns the migrations, and workers refuse to start
+  # while the schema version differs from theirs. A separate role with only the grants in the
+  # chart README ("Node workers") keeps the control plane's credential off worker pods.
+  database:
+    existingSecret: ""
+    urlKey: ""
+  # Env for worker pods only (appended after the global extraEnv), e.g. CALIBAN_PII_NER_* when
+  # nodes handle personal data: workers run the same pipeline as routers.
+  extraEnv: []
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { memory: 1Gi }
+  service:
+    port: 8082
+    annotations: {}
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  # A worker stopped mid-run loses that run's lease; another worker takes it over once the lease
+  # expires (nodes.leaseSeconds) and replays it from its journal.
+  terminationGracePeriodSeconds: 60
 
 # Used when mode=standalone. Services for router and control plane both point at it.
 standalone:
@@ -702,6 +784,9 @@ networkPolicy:
     # Extra peers allowed to call the model pools directly (the Caliban data plane always is).
     # Keep empty: clients should go through Caliban (PII, routing, cache salt, metering).
     modelPools: []
+    # Extra peers allowed to reach the node workers (8082), e.g. Prometheus for /metrics. Routers
+    # always can; empty = routers only (unlike router and controlPlane above).
+    worker: []
   egress:
     dns:
       enabled: true

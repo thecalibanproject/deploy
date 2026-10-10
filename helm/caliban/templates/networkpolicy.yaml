@@ -70,8 +70,10 @@ spec:
               {{- include "caliban.selectorLabels" $ | nindent 14 }}
       {{- end }}
 ---
-# 4) Egress allow-list for router / control plane / standalone (not model pools).
-#    Anything not listed here is dropped (zero egress by default).
+# 4) Egress allow-list for router / control plane / worker / standalone (not model pools).
+#    Anything not listed here is dropped (zero egress by default). Workers need the same as
+#    routers (control plane for snapshots and usage, model pools and providers for model calls,
+#    Valkey and Qdrant) plus Postgres for the node journal.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -99,7 +101,8 @@ spec:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
     {{- end }}
-    # Caliban pods talking to each other (router -> control plane).
+    # Caliban pods talking to each other (routers and workers -> control plane). Routers reach
+    # the workers' port through policy 9.
     - to:
         - podSelector:
             matchLabels:
@@ -150,7 +153,7 @@ spec:
     {{- end }}
 {{- if $poolPorts }}
 ---
-# 5) Ingress to model pools: only from the Caliban data plane (router / standalone).
+# 5) Ingress to model pools: only from the Caliban data plane (router / worker / standalone).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -171,7 +174,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [router, standalone]
+                values: [router, worker, standalone]
         {{- with $np.ingress.modelPools }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -279,5 +282,55 @@ spec:
       ports:
         {{- toYaml .ports | nindent 8 }}
     {{- end }}
+{{- end }}
+{{- if eq (include "caliban.workersEnabled" .) "true" }}
+---
+# 8) Ingress to the node workers (8082): the run API from routers only (with the worker token),
+#    plus networkPolicy.ingress.worker peers (e.g. Prometheus for /metrics).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-ingress-worker
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: router
+        {{- with $np.ingress.worker }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - { port: worker, protocol: TCP }
+---
+# 9) Egress from the routers to the node workers' port (forwarded node runs).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullname }}-egress-router-worker
+  labels:
+    {{- include "caliban.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "caliban.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: router
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "caliban.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+      ports:
+        - { port: 8082, protocol: TCP }
 {{- end }}
 {{- end }}

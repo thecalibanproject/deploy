@@ -1,7 +1,8 @@
 # caliban Helm chart
 
-This chart deploys the Caliban router (data plane, `:8080`) and control plane (admin API and
-web console, `:8081`) from the single `caliban/caliban` image.
+This chart deploys the Caliban router (data plane, `:8080`), control plane (admin API and
+web console, `:8081`) and node workers (node runs, `:8082`) from the single `caliban/caliban`
+image.
 
 ```bash
 kubectl create ns caliban
@@ -29,8 +30,13 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `router.mode` | `snapshot` | Split mode only. `snapshot`: routers poll signed config snapshots from the control plane. `static`: routers read `config` from the ConfigMap. See [Split mode](#split-mode-routers-and-the-control-plane). |
 | `router.snapshot.controlPlaneUrl` | `""` | Defaults to `http://<release>-control-plane:<controlPlane.service.port>`. |
 | `router.snapshot.pollIntervalSeconds` | `10` | `CALIBAN_SNAPSHOT_POLL_SECS`; core adds ±20% jitter. |
-| `router.snapshot.cache.enabled` | `true` | Keeps the last good signed snapshot in an `emptyDir` (`CALIBAN_SNAPSHOT_CACHE`). |
-| `usageSpool.enabled` / `usageSpool.sizeLimit` | `true` / `512Mi` | Undelivered usage events of snapshot routers and standalone, in an `emptyDir` (`CALIBAN_USAGE_SPOOL_DIR`). See [Split mode](#split-mode-routers-and-the-control-plane). Off: they wait in memory and are lost when the container stops. |
+| `router.snapshot.cache.enabled` | `true` | Keeps the last good signed snapshot in an `emptyDir` (`CALIBAN_SNAPSHOT_CACHE`), on routers and workers. `controlPlaneUrl` and `pollIntervalSeconds` apply to workers too. |
+| `usageSpool.enabled` / `usageSpool.sizeLimit` | `true` / `512Mi` | Undelivered usage events of snapshot routers, workers and standalone, in an `emptyDir` (`CALIBAN_USAGE_SPOOL_DIR`). See [Split mode](#split-mode-routers-and-the-control-plane). Off: they wait in memory and are lost when the container stops. |
+| `worker.replicas` | `1` | Node workers (split mode with `router.mode=snapshot`). `0`: no worker, routers answer the run API with 503. Above 1 needs Valkey (the render fails without it). See [Node workers](#node-workers). |
+| `worker.token.existingSecret` / `worker.token.key` | `""` / `worker-token` | Router-to-worker token. Empty: the chart creates `<release>-worker-token` once and keeps it. Set it when you render with `helm template` (Argo CD). |
+| `worker.database.existingSecret` / `worker.database.urlKey` | `""` | A separate DML-only database credential for workers. Empty: `database.*`. |
+| `nodes.syncWaitSeconds`, `nodes.leaseSeconds`, `nodes.pollMs`, `nodes.maxRuns` | `""` (core defaults 60, 30, 500, 64) | `CALIBAN_NODE_*` on the pods that use them (routers, workers, standalone). |
+| `metrics.serviceMonitor.enabled` | `false` | A Prometheus Operator ServiceMonitor for `/metrics` on routers (or standalone) and workers. See [Metrics](#metrics). |
 | `snapshotKeys.existingSecret` | `caliban-snapshot` | Keys `signing-key`, `public-key`, `router-token`. Needed only with `router.mode=snapshot`. `snapshotKeys.create=true` is for dev only. |
 | `snapshotKeys.routerExistingSecret` | `""` | Optional Secret with only `public-key` and `router-token`, read by the routers instead. |
 | `global.imageRegistry` | `""` | Private mirror for every image. The repository path is kept. |
@@ -39,7 +45,7 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `sso.enabled` | `false` | Single sign-on for the console and admin API, with roles. See [Single sign-on](#single-sign-on). |
 | `database.existingSecret` | `caliban-database` | Key `url`: the Postgres DSN. |
 | `providerKeys.existingSecret` | `""` | Every key becomes an env var, for `api_key = { env = "..." }` refs. Mounted on routers too, since refs resolve where the request is served. |
-| `extraEnv` | `[]` | Added to every Caliban pod. `router.extraEnv`, `controlPlane.extraEnv` and `standalone.extraEnv` add env to one component only. |
+| `extraEnv` | `[]` | Added to every Caliban pod. `router.extraEnv`, `controlPlane.extraEnv`, `worker.extraEnv` and `standalone.extraEnv` add env to one component only. |
 | `tcpNodelay` | `true` | Sets `CALIBAN_TCP_NODELAY` (`1`/`0`) on every Caliban pod. Keep it on: on Linux, Nagle plus delayed ACK added 24 to 50 ms to the first streamed token (core `bench/RESULTS-aws-2026-10.md`). |
 | `qdrant.url` / `valkey.url` / `valkey.existingSecret` | in-namespace defaults | Valkey holds the quotas shared by all routers (`config.limits.store: valkey`) |
 | `valkey.passwordSecret` / `valkey.passwordKey` | `""` / `password` | Optional: Valkey password from its own Secret (`CALIBAN_VALKEY_PASSWORD`), when the URL has none |
@@ -48,6 +54,7 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `networkPolicy.enabled` | `true` | Default-deny ingress and egress, plus an explicit allow-list. |
 | `networkPolicy.egress.providers` | `[]` | BYOK allow-list. `cidrs` go into the standard NetworkPolicy; `hosts` need `networkPolicy.cilium.enabled=true`. |
 | `networkPolicy.egress.identityProvider` | `[]` | With `sso.enabled`: egress from the control plane to the issuer (`to` and `ports`, like `datastores`). |
+| `networkPolicy.ingress.worker` | `[]` | Extra peers allowed to reach the workers (8082), e.g. Prometheus. Routers always can; empty = routers only. |
 
 ## Split mode: routers and the control plane
 
@@ -86,39 +93,43 @@ traffic. `router.mode` decides how the routers get their config.
   still spooled after its 5 s shutdown flush, so do not scale down or roll routers during a
   control-plane outage. Routers stay a Deployment rather than a StatefulSet with a PVC per
   pod: that would make rollouts serial, pin each router to its volume's zone, and still strand
-  the spool of a pod removed by an HPA scale-down. Standalone gets the same spool for its
-  shipping to Postgres.
+  the spool of a pod removed by an HPA scale-down. Workers ship their usage (node model calls)
+  the same way, with the same spool, and standalone gets it for its shipping to Postgres.
 
 Where the keys go:
 
 | Env var | Pod | From |
 |---|---|---|
 | `CALIBAN_SNAPSHOT_SIGNING_KEY` | control plane | `snapshotKeys.existingSecret`, key `signing-key` (base64 32-byte Ed25519 seed) |
-| `CALIBAN_ROUTER_TOKEN` | control plane and routers | key `router-token` (any random string; not the admin token) |
-| `CALIBAN_SNAPSHOT_PUBLIC_KEY` | routers | key `public-key` (base64; a comma-separated list is accepted for rotation) |
-| `CALIBAN_KEK` | all | `auth.existingSecret`; wraps the per-tenant data keys; routers open sealed BYOK credentials and derive the tenant `cache_salt` with it |
+| `CALIBAN_ROUTER_TOKEN` | control plane, routers, workers | key `router-token` (any random string; not the admin token) |
+| `CALIBAN_SNAPSHOT_PUBLIC_KEY` | routers, workers | key `public-key` (base64; a comma-separated list is accepted for rotation). Workers read `snapshotKeys.routerExistingSecret` too when it is set |
+| `CALIBAN_KEK` | all | `auth.existingSecret`; wraps the per-tenant data keys; routers open sealed BYOK credentials and derive the tenant `cache_salt` with it; workers also open node specs and seal run data |
 | `CALIBAN_KEK_PREVIOUS` | all | optional key `kek-previous` of `auth.existingSecret` (`auth.kekPreviousKey`): retired KEKs, only during a KEK rotation |
-| `CALIBAN_ADMIN_TOKEN`, `CALIBAN_DATABASE_URL` | control plane, standalone | never on routers; core reads them only for the control plane. With `sso.enabled` the admin token key is optional (no key: break-glass access is off) |
+| `CALIBAN_ADMIN_TOKEN` | control plane, standalone | never on routers or workers; core reads it only for the control plane. With `sso.enabled` the admin token key is optional (no key: break-glass access is off) |
+| `CALIBAN_DATABASE_URL` | control plane, standalone, workers | `database.existingSecret`; workers use `worker.database.existingSecret` when set (DML only). Never on routers |
+| `CALIBAN_WORKER_TOKEN` | routers, workers | `worker.token.existingSecret` (key `worker-token`), or the Secret the chart creates |
+| `CALIBAN_WORKER_URLS` | routers | the worker Service, `http://<release>-worker:8082` |
 | `CALIBAN_OIDC_CLIENT_SECRET` | control plane, standalone | with `sso.enabled` (not `sso.publicClient`): key `oidc-client-secret` of `auth.existingSecret` (`auth.oidcClientSecretKey`) |
 
 `caliban gen-signing-key` prints a matching `CALIBAN_SNAPSHOT_SIGNING_KEY` and
 `CALIBAN_SNAPSHOT_PUBLIC_KEY` pair. Pods read these Secrets at start only, and the chart does
 not checksum Secrets, so restart the Deployments yourself after changing them
-(`kubectl rollout restart deploy/<release>-router`). To rotate the signing key:
+(`kubectl rollout restart deploy/<release>-router deploy/<release>-worker`). To rotate the
+signing key:
 
-1. Set `public-key` to `<old>,<new>` and restart the routers.
+1. Set `public-key` to `<old>,<new>` and restart the routers and workers.
 2. Set `signing-key` to the new seed and restart the control plane.
-3. Set `public-key` to `<new>` and restart the routers.
+3. Set `public-key` to `<new>` and restart the routers and workers.
 
 To rotate the KEK (core README, "KEK rotation"):
 
 1. Set `kek` to a new key (`caliban gen-kek`) and `kek-previous` to the old one, then restart
-   the routers, then the control plane.
+   the routers and workers, then the control plane.
 2. `kubectl exec deploy/<release>-control-plane -- caliban keys rotate` (re-wraps every tenant
    data key and re-seals shared provider keys; audited).
 3. When `kubectl exec deploy/<release>-control-plane -- caliban keys status` shows
-   `"previous_keks_still_needed": []` and the routers have polled once, remove `kek-previous`
-   and restart everything.
+   `"previous_keks_still_needed": []` and the routers and workers have polled once, remove
+   `kek-previous` and restart everything.
 4. Keep the old key offline only as long as you keep backups taken before the rotation, then
    destroy it. Without it, those backups' BYOK keys and datasource credentials cannot be opened
    (for any tenant), which is also what makes a deleted tenant's keys unrecoverable from them.
@@ -126,6 +137,73 @@ To rotate the KEK (core README, "KEK rotation"):
 **`static`.** Routers run `caliban router` against the ConfigMap, like a file-driven
 deployment. Changes made in the console or the admin API stay on the control plane, so keep
 tenants, keys and routes in `config`. No snapshot Secret is needed.
+
+## Node workers
+
+Nodes are AI sub-apps a tenant declares as config (core
+[`docs/nodes.md`](https://github.com/thecalibanproject/core/blob/main/docs/nodes.md)). The
+control plane versions and publishes them; their runs need the Postgres node journal, which
+routers do not hold. So with `mode: split` and `router.mode: snapshot` the chart adds:
+
+- **A worker Deployment** (`caliban worker`, `worker.replicas`, default 1) and its Service on
+  8082. A worker polls the same signed snapshots as a router (`router.snapshot.*`), opens node
+  specs and tenant data keys with the KEK, executes runs from the shared journal (claims with
+  `FOR UPDATE SKIP LOCKED`, leases, takeover when a worker dies), makes its model calls through
+  its own pipeline in-process (PII, caches, routing, quotas, metering) and ships usage to the
+  control plane like a router, with the same spool. Probes use `/healthz` on 8082; `/metrics` is
+  there too. Each worker's id is its pod name (`CALIBAN_WORKER_ID`; core adds a random suffix per
+  process).
+- **Routers forward the run API** (`POST /v1/nodes/{name}/runs`, `GET /v1/runs/{id}`,
+  `POST /v1/runs/{id}/input`) to `CALIBAN_WORKER_URLS=http://<release>-worker:8082`, after
+  checking the API key, with `CALIBAN_WORKER_TOKEN`. Workers check the key again.
+- **The worker token**, from `worker.token.existingSecret`, or a `<release>-worker-token`
+  Secret the chart generates on first install and keeps (it reads the current value back on
+  upgrade, and keeps the Secret on uninstall). Tools that only run `helm template` cannot read
+  it back and would generate a new token on every render: give them an existing Secret.
+- **NetworkPolicies.** Workers accept only routers on 8082 (plus `networkPolicy.ingress.worker`),
+  and routers get an egress rule to that port. Workers share the egress allow-list of the other
+  Caliban pods: the control plane (snapshots, usage), Postgres, Valkey, Qdrant, model pools and
+  BYOK providers; model pools accept workers.
+
+Standalone runs nodes in its own process (Postgres journal), so it gets no worker; nor does
+`router.mode: static`, which has no snapshots. `worker.replicas: 0` turns node runs off in split
+mode: no worker, Service or token, and routers answer the run API with 503.
+
+**Why one worker by default.** Without a worker, a published node cannot run on a split
+install, and one worker needs nothing that split mode does not already have. Runs survive a
+worker restart: they are journaled and taken over once the lease expires (`nodes.leaseSeconds`).
+
+**More than one worker needs Valkey.** A model call that was in flight when its worker died is
+called again, with the same `Idempotency-Key`, by the worker that takes the run over. Only the
+shared store (`config.limits.store: valkey`, with `valkey.url` or `valkey.existingSecret`) lets
+that worker get the stored response instead of paying twice; the in-memory store only covers
+one process. The render fails for `worker.replicas > 1` without it.
+
+**Database role.** The control plane owns the migrations: workers do not apply them and refuse
+to start while the schema version differs from theirs (so upgrade the control plane first). A
+worker needs no DDL, only DML on the node journal. To keep the control plane's credential off
+worker pods, create a role for them and point `worker.database.existingSecret` at its DSN:
+
+```sql
+CREATE ROLE caliban_worker LOGIN PASSWORD '<password>';
+GRANT CONNECT ON DATABASE caliban TO caliban_worker;
+GRANT USAGE ON SCHEMA public TO caliban_worker;
+GRANT SELECT ON caliban_schema_migrations TO caliban_worker;
+GRANT SELECT, INSERT, UPDATE, DELETE ON node_run, node_step, node_event TO caliban_worker;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO caliban_worker;
+```
+
+Run the grants after the control plane has created the tables, and again after an upgrade that
+adds node tables. The list follows core's journal at the time of writing; core
+[`docs/nodes.md`](https://github.com/thecalibanproject/core/blob/main/docs/nodes.md) is the
+authority.
+
+**Upgrade order.** Control plane first (migrations), then routers, then workers. One
+`helm upgrade` rolls all three: a worker that starts before the control plane has migrated
+exits and is restarted until the schema matches, while the old worker keeps running
+(`maxUnavailable: 0`). Routers of an earlier release refuse snapshots that carry nodes (and keep
+serving their last good one), so publish no node until `kubectl rollout status
+deploy/<release>-router` has finished.
 
 ### How `config` is rendered to TOML
 
@@ -211,6 +289,7 @@ NetworkPolicy:
 - Egress is allowed only to cluster DNS, the other Caliban pods, the datastores, the local
   model servers, and any `providers` you list. With `sso.enabled`, the control plane can also
   reach the `identityProvider` peers.
+- Workers (8082) accept only routers, plus `networkPolicy.ingress.worker` peers.
 - Leaving `providers` empty means the pods have no internet path at all.
 
 ## Datastores: bring your own
@@ -260,7 +339,7 @@ How pools behave:
   The PVC is mounted read-only at `/models`. `HF_HUB_OFFLINE=1` and the vLLM/HF telemetry
   opt-outs are set.
 - **Network.** Pools fall under the release's default-deny NetworkPolicy and get **no egress
-  rule at all**, except cluster DNS and the waited-for pools for a pool with `waitFor` (below). Ingress is allowed only from the router/standalone pods
+  rule at all**, except cluster DNS and the waited-for pools for a pool with `waitFor` (below). Ingress is allowed only from the router, worker and standalone pods
   (`<release>-ingress-model-pools`). The Caliban egress policy gets a matching rule
   automatically.
 - **Security.** Pods run as non-root (uid 1000, all capabilities dropped, seccomp
@@ -305,28 +384,34 @@ On air-gapped clusters, give the engine `HF_HUB_OFFLINE=1`, a pre-filled model v
 
 ## PII NER
 
-The L1 NER detector runs in the pods that serve traffic (router, or standalone). In the second
+The L1 NER detector runs in the pods that serve traffic (router, or standalone) and in the
+node workers, whose model calls go through the same pipeline. In the second
 AWS run it was 1.8 times faster per call on x86 with AVX-512 VNNI than on Graviton4 (43 ms
 against 77 ms; 29.7 ms and 103 req/s on 8 vCPU with 2 threads per session, core
 `bench/RESULTS-aws-2026-10b.md`), so pin those pods to amd64 nodes for NER-heavy tenants
 (`router.nodeSelector: { kubernetes.io/arch: amd64 }`). The chart sets no `CALIBAN_PII_NER_*`
 variables, so core's defaults apply; to override them, set both `CALIBAN_PII_NER_SESSIONS` and
-`CALIBAN_PII_NER_THREADS` in `router.extraEnv`.
+`CALIBAN_PII_NER_THREADS` in `router.extraEnv` (and `worker.extraEnv`).
 
 ## Metrics
 
-The data plane serves `GET /metrics` (Prometheus text format) on its public port, 8080 on
-routers and standalone, **without authentication**, like `/healthz`. It carries the snapshot
-version and KEK ids (`caliban_snapshot_info`) and the usage WAL and shipping counters
-(`caliban_usage_shipped_total`, `caliban_usage_ship_dropped_total`,
+`GET /metrics` (Prometheus text format) is served **without authentication**, like
+`/healthz`, on the data-plane port (8080 on routers and standalone) and on the worker port
+(8082). It carries the snapshot version and KEK ids (`caliban_snapshot_info`) and the usage WAL
+and shipping counters (`caliban_usage_shipped_total`, `caliban_usage_ship_dropped_total`,
 `caliban_usage_ship_errors_total`, `caliban_usage_ship_backlog`, ...); no tenant data, and no
-request, latency or quota metrics yet. The control plane has none.
+request, latency or quota metrics yet. The control plane has none, so it is not scraped.
 
-The chart ships no ServiceMonitor or scrape annotations. To scrape it:
-- with the Prometheus Operator, a ServiceMonitor selecting the router Service
-  (`app.kubernetes.io/component: router`) on port `http`, path `/metrics`; or annotations
-  through `router.podAnnotations` if your Prometheus uses them;
-- if `networkPolicy.ingress.router` is restricted, add your Prometheus namespace to it.
+To scrape it:
+- with the Prometheus Operator, set `metrics.serviceMonitor.enabled: true` (off by default). The
+  chart renders one ServiceMonitor for the router Service (port `http`) and, with workers, the
+  worker Service (port `worker`), path `/metrics`, every `metrics.serviceMonitor.interval`. Add
+  the labels your Prometheus selects ServiceMonitors by in `metrics.serviceMonitor.labels`;
+- otherwise, annotations through `router.podAnnotations` and `worker.podAnnotations` if your
+  Prometheus uses them;
+- either way, let Prometheus through the NetworkPolicy: `networkPolicy.ingress.worker` for the
+  workers (they accept only routers otherwise), and `networkPolicy.ingress.router` if you
+  restrict it.
 
 If an ingress or TLS proxy publishes the router to clients, block `/metrics` there: the
 backlog and snapshot version are operational details clients do not need. Alert on

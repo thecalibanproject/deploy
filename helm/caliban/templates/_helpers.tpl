@@ -108,6 +108,22 @@ app.kubernetes.io/part-of: caliban
 {{- .Values.router.snapshot.controlPlaneUrl | default (printf "http://%s-control-plane:%v" (include "caliban.fullname" .) .Values.controlPlane.service.port) -}}
 {{- end -}}
 
+{{/* ───────────── node workers ─────────────
+  "true" when the release runs node workers: split mode with router.mode=snapshot (workers
+  poll the same signed snapshots) and worker.replicas > 0. Standalone runs nodes in-process.
+*/}}
+{{- define "caliban.workersEnabled" -}}
+{{- if and (eq (include "caliban.routerMode" .) "snapshot") (gt (int .Values.worker.replicas) 0) -}}true{{- end -}}
+{{- end -}}
+
+{{- define "caliban.workerTokenSecretName" -}}
+{{- .Values.worker.token.existingSecret | default (printf "%s-worker-token" (include "caliban.fullname" .)) -}}
+{{- end -}}
+
+{{- define "caliban.workerUrl" -}}
+{{- printf "http://%s-worker:%v" (include "caliban.fullname" .) .Values.worker.service.port -}}
+{{- end -}}
+
 {{/* ───────────── TOML rendering ─────────────
   Values under .Values.config are rendered as TOML:
     scalar / list of scalars      -> key = value
@@ -249,7 +265,7 @@ app.kubernetes.io/part-of: caliban
 {{/* ───────────── shared pod / deployment ─────────────
   Args (dict):
     root       top-level context
-    component  router | control-plane | standalone
+    component  router | control-plane | worker | standalone
     values     the component's values block
 */}}
 
@@ -265,6 +281,7 @@ app.kubernetes.io/component: {{ .component }}
 {{- $ports := list -}}
 {{- if or (eq $c "router") (eq $c "standalone") -}}{{- $ports = append $ports (dict "name" "http" "port" 8080) -}}{{- end -}}
 {{- if or (eq $c "control-plane") (eq $c "standalone") -}}{{- $ports = append $ports (dict "name" "admin" "port" 8081) -}}{{- end -}}
+{{- if eq $c "worker" -}}{{- $ports = append $ports (dict "name" "worker" "port" 8082) -}}{{- end -}}
 {{- $live := dict "path" "/healthz" "port" "http" -}}
 {{- $ready := dict "path" "/healthz" "port" "http" -}}
 {{- if eq $c "control-plane" -}}
@@ -272,18 +289,30 @@ app.kubernetes.io/component: {{ .component }}
 {{- $ready = $live -}}
 {{- else if eq $c "standalone" -}}
 {{- $ready = dict "path" "/api/v1/health" "port" "admin" -}}
+{{- else if eq $c "worker" -}}
+{{- $live = dict "path" "/healthz" "port" "worker" -}}
+{{- $ready = $live -}}
 {{- end -}}
-{{- /* Split mode with router.mode=snapshot: routers take their config from the control
-       plane and do not mount the ConfigMap; the control plane signs the snapshots. */ -}}
+{{- /* Split mode with router.mode=snapshot: routers and workers take their config from the
+       control plane and do not mount the ConfigMap; the control plane signs the snapshots. */ -}}
 {{- $snapshot := eq (include "caliban.routerMode" $root) "snapshot" -}}
 {{- $isRouter := eq $c "router" -}}
+{{- $isWorker := eq $c "worker" -}}
+{{- /* The control plane, embedded or not: admin token, database, web console. */ -}}
+{{- $isCP := or (eq $c "control-plane") (eq $c "standalone") -}}
 {{- $snapRouter := and $isRouter $snapshot -}}
+{{- $snapClient := or $snapRouter $isWorker -}}
 {{- $snapCP := and (eq $c "control-plane") $snapshot -}}
-{{- $useConfig := not $snapRouter -}}
-{{- $snapCache := and $snapRouter $root.Values.router.snapshot.cache.enabled -}}
-{{- /* Usage shipping: snapshot routers send to the control plane, standalone to its Postgres. */ -}}
-{{- $spool := and $root.Values.usageSpool.enabled (or $snapRouter (eq $c "standalone")) -}}
-{{- if $snapRouter -}}
+{{- $useConfig := not $snapClient -}}
+{{- $snapCache := and $snapClient $root.Values.router.snapshot.cache.enabled -}}
+{{- /* Usage shipping: snapshot routers and workers send to the control plane, standalone to
+       its Postgres. */ -}}
+{{- $spool := and $root.Values.usageSpool.enabled (or $snapClient (eq $c "standalone")) -}}
+{{- /* Node runs: routers forward them to the workers; workers and standalone execute them. */ -}}
+{{- $forward := and $snapRouter (eq (include "caliban.workersEnabled" $root) "true") -}}
+{{- $executes := or $isWorker (eq $c "standalone") -}}
+{{- $nodes := $root.Values.nodes -}}
+{{- if $snapClient -}}
 {{- $poll := int $root.Values.router.snapshot.pollIntervalSeconds -}}
 {{- if lt $poll 1 -}}{{- fail "router.snapshot.pollIntervalSeconds must be >= 1" -}}{{- end -}}
 {{- end -}}
@@ -357,9 +386,9 @@ spec:
               value: {{ $root.Values.log | quote }}
             - name: CALIBAN_TCP_NODELAY
               value: {{ if eq (toString $root.Values.tcpNodelay) "false" }}"0"{{ else }}"1"{{ end }}
-            {{- if not $isRouter }}
-            # Control plane only: routers never read the admin token or the database
-            # (core reads both only when it builds the control plane).
+            {{- if $isCP }}
+            # Control plane only: routers and workers never read the admin token (core reads
+            # it only when it builds the control plane); workers get their own database URL.
             - name: CALIBAN_WEB_DIR
               value: /usr/share/caliban/web
             - name: CALIBAN_ADMIN_TOKEN
@@ -385,6 +414,14 @@ spec:
                 secretKeyRef:
                   name: {{ required "database.existingSecret is required" $root.Values.database.existingSecret }}
                   key: {{ $root.Values.database.urlKey }}
+            {{- end }}
+            {{- if $isWorker }}
+            # The node journal (DML only; the control plane owns the migrations).
+            - name: CALIBAN_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.worker.database.existingSecret | default (required "database.existingSecret (or worker.database.existingSecret) is required" $root.Values.database.existingSecret) }}
+                  key: {{ $root.Values.worker.database.urlKey | default $root.Values.database.urlKey }}
             {{- end }}
             # Every component: opens sealed BYOK credentials (they stay sealed inside
             # snapshots) and derives the per-tenant cache_salt, which must match across routers.
@@ -413,7 +450,7 @@ spec:
                   name: {{ include "caliban.snapshotSecretName" $root }}
                   key: {{ $root.Values.snapshotKeys.routerTokenKey }}
             {{- end }}
-            {{- if $snapRouter }}
+            {{- if $snapClient }}
             # Split mode: config comes from signed control-plane snapshots, not the ConfigMap.
             - name: CALIBAN_CONTROL_PLANE_URL
               value: {{ include "caliban.controlPlaneUrl" $root | quote }}
@@ -433,11 +470,54 @@ spec:
             - name: CALIBAN_SNAPSHOT_CACHE
               value: /var/lib/caliban/snapshot.json
             {{- end }}
+            {{- if $isRouter }}
             # Stable id for check-ins (router_status, `caliban keys status`): the pod name.
             - name: CALIBAN_ROUTER_ID
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- else }}
+            # Worker id: lease owner on the runs it executes, check-in and usage shipping id.
+            # Core appends a random suffix per process, so a restarted container never reuses
+            # the leases of the one before it.
+            - name: CALIBAN_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- end }}
+            {{- end }}
+            {{- if or $forward $isWorker }}
+            # Shared secret on router-to-worker requests (x-caliban-worker-token).
+            - name: CALIBAN_WORKER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "caliban.workerTokenSecretName" $root }}
+                  key: {{ $root.Values.worker.token.key }}
+            {{- end }}
+            {{- if $forward }}
+            # Node runs are forwarded to the worker Service (routers hold no database).
+            - name: CALIBAN_WORKER_URLS
+              value: {{ include "caliban.workerUrl" $root | quote }}
+            {{- end }}
+            {{- if or $forward $executes }}
+            {{- with $nodes.syncWaitSeconds }}
+            - name: CALIBAN_NODE_SYNC_WAIT_SECS
+              value: {{ int . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if $executes }}
+            {{- with $nodes.leaseSeconds }}
+            - name: CALIBAN_NODE_LEASE_SECS
+              value: {{ int . | quote }}
+            {{- end }}
+            {{- with $nodes.pollMs }}
+            - name: CALIBAN_NODE_POLL_MS
+              value: {{ int . | quote }}
+            {{- end }}
+            {{- with $nodes.maxRuns }}
+            - name: CALIBAN_NODE_MAX_RUNS
+              value: {{ int . | quote }}
+            {{- end }}
             {{- end }}
             {{- if $spool }}
             # Undelivered usage events (usageSpool). A subdirectory, so core can make it 0700.
@@ -529,15 +609,15 @@ spec:
             sizeLimit: 64Mi
         {{- if $snapCache }}
         # Last good signed snapshot (written 0600, re-verified on load). An emptyDir survives
-        # container restarts, so a router restarted while the control plane is down keeps
-        # serving; a new pod still needs the control plane once.
+        # container restarts, so a router or worker restarted while the control plane is down
+        # keeps serving; a new pod still needs the control plane once.
         - name: snapshot-cache
           emptyDir:
             sizeLimit: {{ $root.Values.router.snapshot.cache.sizeLimit }}
         {{- end }}
         {{- if $spool }}
         # Usage events not yet delivered: survives container restarts, not the pod (see
-        # usageSpool in values.yaml for why routers are not a StatefulSet).
+        # usageSpool in values.yaml for why routers and workers are not StatefulSets).
         - name: usage-spool
           emptyDir:
             sizeLimit: {{ $root.Values.usageSpool.sizeLimit }}
