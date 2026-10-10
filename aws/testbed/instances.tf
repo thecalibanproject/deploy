@@ -41,6 +41,7 @@ locals {
       GPU_IP                 = local.ip_of.gpu
       LOADGEN_IP             = local.ip_of.loadgen
       GATEWAY_USE_GPU_MODELS = tostring(var.gateway_use_gpu_models && var.gpu_enabled)
+      GATEWAY_WORKER         = tostring(var.gateway_enabled && var.gateway_run_worker)
       GPU_PROFILES           = join(" ", var.gpu_compose_profiles)
       GPU_RUN_CALIBAN        = tostring(var.gpu_run_caliban)
       GPU_FETCH_ARGS         = var.gpu_weights_fetch_args

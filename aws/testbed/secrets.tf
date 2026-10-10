@@ -23,6 +23,13 @@ resource "random_password" "router_token" {
   special = false
 }
 
+# Router-to-worker token (gateway_run_worker). Generated whether or not the worker runs, so
+# turning it on does not change the parameters.
+resource "random_password" "worker_token" {
+  length  = 64
+  special = false
+}
+
 # CALIBAN_KEK: exactly 32 random bytes, base64.
 resource "random_bytes" "kek" {
   length = 32
@@ -41,6 +48,7 @@ locals {
     postgres-password    = random_password.postgres.result
     valkey-password      = random_password.valkey.result
     router-token         = random_password.router_token.result
+    worker-token         = random_password.worker_token.result
     kek                  = random_bytes.kek.base64
     snapshot-signing-pem = tls_private_key.snapshot.private_key_pem_pkcs8
   }

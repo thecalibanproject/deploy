@@ -256,6 +256,21 @@ jobs:
           # The image owns the volume's mount point, so the spool is writable without root.
           grep -qF 'COPY --from=core --chown=65532:65532 --chmod=0700 /out/state /var/lib/caliban' \
             images/caliban.Dockerfile || { echo "::error::the image must own /var/lib/caliban"; exit 1; }
+      - name: AWS testbed gateway override, with the optional node worker
+        env:
+          CALIBAN_SNAPSHOT_SIGNING_KEY: ci-placeholder
+          CALIBAN_SNAPSHOT_PUBLIC_KEY: ci-placeholder
+          CALIBAN_ROUTER_TOKEN: ci-placeholder
+          CALIBAN_WORKER_TOKEN: ci-placeholder
+          TESTBED_BIND: 10.42.0.10
+        run: |
+          files=(-f compose/docker-compose.yml -f aws/testbed/bootstrap/compose.testbed-gateway.yml)
+          docker compose "${files[@]}" config -q
+          cfg=$(docker compose "${files[@]}" --profile worker config --format json)
+          jq -e '.services["caliban-worker"].command[0] == "worker"
+            and .services["caliban-worker"].read_only == true
+            and .services["caliban-worker"].depends_on.caliban.condition == "service_healthy"' <<<"$cfg" > /dev/null \
+            || { echo "::error::caliban-worker"; exit 1; }
 
   shell:
     name: Shellcheck and Dockerfile check

@@ -64,6 +64,10 @@ run "defaults_gateway_and_loadgen" {
     condition     = length(aws_scheduler_schedule.ttl_stop) == 1
     error_message = "the TTL schedule must exist whenever hosts exist"
   }
+  assert {
+    condition     = local.host_env["gateway"].GATEWAY_WORKER == "false" && contains(keys(aws_ssm_parameter.secret), "worker-token")
+    error_message = "no node worker by default, but its token exists so turning it on changes no parameter"
+  }
 }
 
 run "full_split_and_gpu" {
@@ -196,6 +200,42 @@ run "peer_addresses_do_not_depend_on_other_hosts" {
   assert {
     condition     = !contains(keys(local.host_env["loadgen"]), "ROUTER_IPS")
     error_message = "the router list must not be in user data (it replaced every host when router_count changed)"
+  }
+}
+
+run "gateway_worker" {
+  command = plan
+
+  variables {
+    gateway_run_worker = true
+    router_count       = 2
+  }
+
+  assert {
+    condition     = alltrue([for k in ["gateway", "router-1", "router-2", "loadgen"] : local.host_env[k].GATEWAY_WORKER == "true"])
+    error_message = "the gateway runs the worker and the routers forward node runs to it"
+  }
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.hosts["node-worker"].from_port == 8082 && aws_vpc_security_group_ingress_rule.hosts["node-worker"].cidr_ipv4 == "10.42.0.0/16"
+    error_message = "routers reach the worker on 8082, from inside the VPC only"
+  }
+  assert {
+    condition     = length(aws_instance.host) == 4
+    error_message = "the worker runs on the gateway host, not on a host of its own"
+  }
+}
+
+run "worker_needs_the_gateway" {
+  command = plan
+
+  variables {
+    gateway_enabled    = false
+    gateway_run_worker = true
+  }
+
+  assert {
+    condition     = local.host_env["loadgen"].GATEWAY_WORKER == "false"
+    error_message = "without the gateway there is no worker to forward to"
   }
 }
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Gateway host: Caliban standalone (router + control plane) with Postgres, Valkey and Qdrant
 # from compose/docker-compose.yml, plus compose.testbed-gateway.yml (split-mode keys,
-# datastore ports on the private IP, model base_urls pointed at the GPU host when it exists).
+# datastore ports on the private IP, model base_urls pointed at the GPU host when it exists,
+# and with gateway_run_worker a `caliban worker` for the routers' node runs).
 set -euo pipefail
 # shellcheck source=common.sh
 . /opt/caliban-testbed/common.sh
@@ -16,6 +17,10 @@ env_file="$DEPLOY_DIR/compose/.env"
 write_compose_env
 set_env "$env_file" CALIBAN_SNAPSHOT_SIGNING_KEY "$(snapshot_seed_b64)"
 set_env "$env_file" CALIBAN_ROUTER_TOKEN "$(param router-token)"
+# The worker service (profile `worker`) verifies snapshots like a router and takes the routers'
+# node runs. Always written: compose checks the variables of every service in the file.
+set_env "$env_file" CALIBAN_SNAPSHOT_PUBLIC_KEY "$(snapshot_pub_b64)"
+set_env "$env_file" CALIBAN_WORKER_TOKEN "$(param worker-token)"
 set_env "$env_file" TESTBED_CALIBAN_TOML "$TB/caliban.toml"
 
 # Config: the deploy repo's file, with the model pools on the GPU host when there is one.
@@ -34,7 +39,13 @@ if [ "$GATEWAY_USE_GPU_MODELS" = true ] && [ -n "$GPU_IP" ]; then
 fi
 chmod 0644 "$TB/caliban.toml"
 
+profiles=()
+if [ "$GATEWAY_WORKER" = true ]; then
+  profiles=(--profile worker)
+  log "running a node worker next to standalone (8082)"
+fi
+
 cd "$DEPLOY_DIR/compose"
-docker compose -f docker-compose.yml -f "$TB/compose.testbed-gateway.yml" up -d --wait --wait-timeout 600
+docker compose -f docker-compose.yml -f "$TB/compose.testbed-gateway.yml" "${profiles[@]}" up -d --wait --wait-timeout 600
 docker compose ps
 mark_ready

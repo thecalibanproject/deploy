@@ -11,6 +11,11 @@
 #   postgres, valkey, qdrant
 #              join `testbed-in` (masquerade off: no route out) so their ports can be
 #              published on the host's private IP for split-mode routers and benchmarks.
+#   caliban-worker (profile `worker`, gateway_run_worker)
+#              `caliban worker` for the routers' node runs, published on the private IP (8082).
+#              Snapshots and usage go to the gateway's control plane; the journal is its
+#              Postgres. It shares the network layout of `caliban` (model calls to the GPU host).
+#              Start it after `caliban`, which migrates the database.
 services:
   caliban:
     environment:
@@ -21,6 +26,59 @@ services:
     networks: !override
       - backend
       - testbed-out
+
+  caliban-worker:
+    profiles: [worker]
+    image: ${CALIBAN_IMAGE:-caliban/caliban}:${CALIBAN_VERSION:-0.1.0}
+    command: ["worker", "--snapshot-cache", "/var/lib/caliban/snapshot.json"]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    environment:
+      CALIBAN_LOG: ${CALIBAN_LOG:-info}
+      CALIBAN_CONTROL_PLANE_URL: http://caliban:8081
+      CALIBAN_ROUTER_TOKEN: ${CALIBAN_ROUTER_TOKEN:?set by the testbed bootstrap}
+      CALIBAN_SNAPSHOT_PUBLIC_KEY: ${CALIBAN_SNAPSHOT_PUBLIC_KEY:?set by the testbed bootstrap}
+      CALIBAN_WORKER_TOKEN: ${CALIBAN_WORKER_TOKEN:?set by the testbed bootstrap}
+      CALIBAN_KEK: ${CALIBAN_KEK:?set CALIBAN_KEK in .env (base64, 32 bytes)}
+      CALIBAN_KEK_PREVIOUS: ${CALIBAN_KEK_PREVIOUS:-}
+      CALIBAN_DATABASE_URL: postgres://caliban:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/caliban
+      CALIBAN_VALKEY_URL: redis://:${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env}@valkey:6379/0
+      CALIBAN_QDRANT_URL: http://qdrant:6333
+      CALIBAN_WORKER_ID: gateway-worker
+      CALIBAN_USAGE_SPOOL_DIR: /var/lib/caliban/usage/spool
+      CALIBAN_TCP_NODELAY: ${CALIBAN_TCP_NODELAY:-1}
+      CALIBAN_NODE_SYNC_WAIT_SECS: ${CALIBAN_NODE_SYNC_WAIT_SECS:-60}
+      CALIBAN_NODE_LEASE_SECS: ${CALIBAN_NODE_LEASE_SECS:-30}
+      CALIBAN_NODE_POLL_MS: ${CALIBAN_NODE_POLL_MS:-500}
+      CALIBAN_NODE_MAX_RUNS: ${CALIBAN_NODE_MAX_RUNS:-64}
+    volumes:
+      # Snapshot cache and usage spool; the image owns /var/lib/caliban as 65532.
+      - worker-state:/var/lib/caliban
+    networks:
+      - backend
+      - testbed-out
+    ports:
+      - "${TESTBED_BIND:?set by the testbed bootstrap}:8082:8082"
+    depends_on:
+      caliban:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/caliban", "healthcheck", "--addr", "127.0.0.1:8082", "--path", "/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   postgres:
     networks:
@@ -43,6 +101,9 @@ services:
     ports:
       - "${TESTBED_BIND:?set by the testbed bootstrap}:6333:6333"
       - "${TESTBED_BIND:?set by the testbed bootstrap}:6334:6334"
+
+volumes:
+  worker-state:
 
 networks:
   testbed-in:

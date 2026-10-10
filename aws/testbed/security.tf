@@ -10,6 +10,7 @@ locals {
   ingress_ports = {
     data-plane    = { from = 8080, to = 8080, desc = "Caliban data plane (/v1, /healthz)" }
     control-plane = { from = 8081, to = 8081, desc = "Caliban control plane, console, split-mode snapshots" }
+    node-worker   = { from = 8082, to = 8082, desc = "Caliban node worker on the gateway (run API for routers, /healthz, /metrics)" }
     postgres      = { from = 5432, to = 5432, desc = "Postgres on the gateway" }
     valkey        = { from = 6379, to = 6379, desc = "Valkey on the gateway (shared quota store)" }
     qdrant        = { from = 6333, to = 6334, desc = "Qdrant HTTP and gRPC on the gateway" }

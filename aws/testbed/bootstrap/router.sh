@@ -27,6 +27,14 @@ CALIBAN_ROUTER_ID=$HOST_KEY
 # Usage events the control plane has not acknowledged, on the host disk (survives the container).
 CALIBAN_USAGE_SPOOL_DIR=/var/lib/caliban/usage-spool
 ENV
+if [ "$GATEWAY_WORKER" = true ]; then
+  # Node runs go to the worker on the gateway (gateway_run_worker); without one this router
+  # answers the run API with 503.
+  cat >> /etc/caliban-testbed/router.env <<ENV
+CALIBAN_WORKER_URLS=http://$GATEWAY_IP:8082
+CALIBAN_WORKER_TOKEN=$(param worker-token)
+ENV
+fi
 umask 022
 
 install -d -o 65532 -g 65532 -m 0700 /var/lib/caliban

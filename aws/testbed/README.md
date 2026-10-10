@@ -38,7 +38,7 @@ aws/
     ├── tests/testbed.tftest.hcl  offline plan tests with a mocked AWS provider
     └── bootstrap/                what cloud-init runs on the hosts
         ├── common.sh             Docker, compose, image build or bundle load, secrets
-        ├── gateway.sh            compose stack (standalone) + testbed override
+        ├── gateway.sh            compose stack (standalone) + testbed override (+ node worker)
         ├── router.sh             `caliban router` in split/snapshot mode
         ├── loadgen.sh            Rust, the bench crate, oha
         ├── gpu.sh                compose model profiles on the L40S
@@ -136,6 +136,7 @@ Always created (free or nearly free while idle): the VPC, its three subnets, rou
 |---|---|---|
 | `gateway_enabled` | `true` | `aws_instance.host["gateway"]` (c8g.2xlarge) |
 | `router_count` | `0` | `aws_instance.host["router-1..N"]` (c8g.xlarge each) |
+| `gateway_run_worker` | `false` | no resource: the gateway also runs `caliban worker` (compose profile `worker`, port 8082) and routers forward node runs to it |
 | `loadgen_enabled` | `true` | `aws_instance.host["loadgen"]` (c8g.2xlarge) |
 | `gpu_enabled` | `false` | `aws_instance.host["gpu"]` (g6e.xlarge, DLAMI, 150 GB gp3; 300 GB when isolated) |
 | `gpu_market` | `spot` | persistent spot request that stops on interruption; `on-demand` is the fallback |
@@ -158,12 +159,12 @@ Other useful variables: `core_ref` (a branch or tag to build), `web_ref`, `deplo
 
 | Host | AMI | What the bootstrap does |
 |---|---|---|
-| gateway | Amazon Linux 2023 | Docker, compose and buildx plugins; image (build or bundle); `compose/.env` with secrets from SSM; `docker compose -f docker-compose.yml -f compose.testbed-gateway.yml up -d --wait` |
-| router-N | Amazon Linux 2023 | Docker; image; `docker run caliban/caliban:<v> router --control-plane-url http://<gateway>:8081 --snapshot-cache ...` with the snapshot public key, router token, KEK and the gateway's Valkey; `CALIBAN_ROUTER_ID` is the host key (`router-1`, ...) and undelivered usage events spool to `/var/lib/caliban/usage-spool` on the host |
+| gateway | Amazon Linux 2023 | Docker, compose and buildx plugins; image (build or bundle); `compose/.env` with secrets from SSM; `docker compose -f docker-compose.yml -f compose.testbed-gateway.yml up -d --wait` (with `--profile worker` when `gateway_run_worker`) |
+| router-N | Amazon Linux 2023 | Docker; image; `docker run caliban/caliban:<v> router --control-plane-url http://<gateway>:8081 --snapshot-cache ...` with the snapshot public key, router token, KEK and the gateway's Valkey; `CALIBAN_ROUTER_ID` is the host key (`router-1`, ...) and undelivered usage events spool to `/var/lib/caliban/usage-spool` on the host; with `gateway_run_worker`, `CALIBAN_WORKER_URLS=http://<gateway>:8082` and the worker token |
 | loadgen | Amazon Linux 2023 | build tools, rustup (stable), `cargo install oha`, core at `bench_ref` and `cargo build --release -p caliban-bench` if that package exists; else `s3://<bucket>/tools/<arch>/caliban-bench` |
 | gpu | Deep Learning Base OSS NVIDIA Driver GPU AMI (Ubuntu 24.04), from the public SSM parameter | NVIDIA driver, Docker and NVIDIA Container Toolkit come with the AMI; weights with `airgap/bundle.sh fetch` (connected) or from the bundle (s3); `docker compose ... --profile qwen3-large --profile embeddings --profile reranker up -d qwen3-large embed rerank` |
 
-`compose.testbed-gateway.yml` gives the gateway's Caliban the split-mode signing key and router token, swaps its `edge` network for a NAT'd bridge so it can call the GPU host and mock upstreams in the VPC, and publishes Postgres, Valkey and Qdrant on the host's private IP through a bridge with masquerading off. When the GPU host is enabled, the gateway's `caliban.toml` points the model providers at it (`8000` chat, `8001` embed, `8002` rerank) before the first start, because Postgres becomes the source of truth after that.
+`compose.testbed-gateway.yml` gives the gateway's Caliban the split-mode signing key and router token, defines the optional `caliban-worker` service (profile `worker`), swaps its `edge` network for a NAT'd bridge so it can call the GPU host and mock upstreams in the VPC, and publishes Postgres, Valkey and Qdrant on the host's private IP through a bridge with masquerading off. When the GPU host is enabled, the gateway's `caliban.toml` points the model providers at it (`8000` chat, `8001` embed, `8002` rerank) before the first start, because Postgres becomes the source of truth after that.
 
 `compose.testbed-models.yml` publishes the model servers on the GPU host's private IP through a bridge with masquerading off, so they still have no route out.
 
@@ -359,7 +360,8 @@ tofu apply -var router_count=4               # 32 standard vCPUs with gateway + 
 3. Propagation: create a key or change a route on the gateway, then time how long until every router honours it (one poll interval, about 10 s).
 4. Fail-static: on the gateway, `cd $CALIBAN_DEPLOY_DIR/compose && sudo docker compose -f docker-compose.yml -f /opt/caliban-testbed/compose.testbed-gateway.yml stop caliban`; the routers keep serving. `sudo docker restart caliban-router` on a router while the control plane is down: it serves from `/var/lib/caliban/snapshot.json`. Requests served meanwhile spool their usage events to `/var/lib/caliban/usage-spool` (`curl -s localhost:8080/healthz | jq .usage_shipping`, or `curl -s localhost:8080/metrics | grep caliban_usage_ship_backlog`) and reach `GET /api/v1/usage` once the control plane is back, each counted once. Routers and the gateway must run the same release: a control plane without usage ingest answers 404 and the events stay spooled.
 5. Load: run the same `oha` or bench command against each router IP at once and compare with (a). For the shared quota, add `[limits.tenants.<tenant id>]` with `requests_per_minute` to `/opt/caliban-testbed/caliban.toml` on the gateway, recreate `caliban`, and send requests alternating between routers: the limit holds across all of them together. core `bench/scripts/split.py` automates this, `Idempotency-Key` across routers (replay, 409, 422), BYOK keys opened by every router, and fail-static.
-6. KEK rotation (core README, "KEK rotation"): routers read `/etc/caliban-testbed/router.env`, which has `CALIBAN_KEK` but no `CALIBAN_KEK_PREVIOUS`. On each router, edit that file (new `CALIBAN_KEK`, old key in `CALIBAN_KEK_PREVIOUS`) and recreate the container with the `docker run` line from `bootstrap/router.sh`; then the gateway's `compose/.env` and `docker compose ... up -d --force-recreate caliban`; then `docker compose exec caliban caliban keys rotate` and `keys status`. Keep the new key on the hosts (do not copy it through the bucket or SSM by hand). The snapshot version does not change on `keys rotate`, so check the routers by sending a BYOK request through each before removing `CALIBAN_KEK_PREVIOUS`.
+6. Node runs (`-var gateway_run_worker=true`, with the routers): the gateway also runs `caliban worker` (`caliban-worker` in `docker compose ps`), on the gateway's Postgres journal, polling the gateway's control plane for snapshots and shipping usage to it; the routers forward `POST /v1/nodes/{name}/runs` and the run endpoints to `http://<gateway>:8082` with the worker token (SSM `worker-token`). The standalone process on the gateway executes runs too and shares the journal, so either may claim an async run. Check `curl -s http://<gateway>:8082/healthz` from a router, publish a node on the control plane (core `docs/nodes.md`), then start a run through each router. Upgrade order for this release: the gateway first (it owns the migrations; the worker starts after it and refuses a schema it does not match), then the routers; publish no node before every router runs this release. One worker needs no more than the Valkey the gateway already has.
+7. KEK rotation (core README, "KEK rotation"): routers read `/etc/caliban-testbed/router.env`, which has `CALIBAN_KEK` but no `CALIBAN_KEK_PREVIOUS`. On each router, edit that file (new `CALIBAN_KEK`, old key in `CALIBAN_KEK_PREVIOUS`) and recreate the container with the `docker run` line from `bootstrap/router.sh`; then the gateway's `compose/.env` and `docker compose ... up -d --force-recreate caliban`; then `docker compose exec caliban caliban keys rotate` and `keys status`. Keep the new key on the hosts (do not copy it through the bucket or SSM by hand). The snapshot version does not change on `keys rotate`, so check the routers by sending a BYOK request through each before removing `CALIBAN_KEK_PREVIOUS`.
 
 ### (c) GPU open-model tier
 
@@ -474,9 +476,10 @@ docker run --rm -v "$PWD/bootstrap":/mnt -w /mnt koalaman/shellcheck:v0.11.0 -x 
 (cd ../../compose && cp .env.example .env && \
   CALIBAN_ADMIN_TOKEN=x CALIBAN_KEK=x POSTGRES_PASSWORD=x VALKEY_PASSWORD=x \
   CALIBAN_SNAPSHOT_SIGNING_KEY=x CALIBAN_ROUTER_TOKEN=x TESTBED_BIND=10.42.0.10 \
+  CALIBAN_SNAPSHOT_PUBLIC_KEY=x CALIBAN_WORKER_TOKEN=x \
   docker compose -f docker-compose.yml -f ../aws/testbed/bootstrap/compose.testbed-gateway.yml \
     -f ../aws/testbed/bootstrap/compose.testbed-models.yml \
-    --profile qwen3-large --profile embeddings --profile reranker config -q)
+    --profile qwen3-large --profile embeddings --profile reranker --profile worker config -q)
 ```
 
 Accepted scanner findings are annotated in place with `trivy:ignore` and `checkov:skip` comments and a reason: SSE-S3 rather than KMS (as specified), no bucket access logging or replication, flow logs as a toggle, outbound HTTPS from connected hosts only, no detailed monitoring.
@@ -490,5 +493,5 @@ Accepted scanner findings are annotated in place with `trivy:ignore` and `checko
 - `tofu test` reads `terraform.tfvars` from the module directory, so local values (for example `gpu_enabled = true`) make some offline tests fail. Run the tests from a copy without it, or move it aside.
 - **vLLM start order on the 48 GB tier.** In the second run the 27B model profiled its memory while the reranker was still starting, got 1.2 GiB of KV cache (one 131072-token sequence needs 4.3 GiB) and crash-looped. Restarting it alone once the embedder and reranker were healthy, with `QWEN3_LARGE_MAX_MODEL_LEN=32768`, gave 5.15 GiB. Both are now the defaults: compose starts the chat pool after `embed` and `rerank` are healthy, and `.env.example` sets 32768. The run changed both at once, so which one the first start needed is not established. Docker restarts containers after a reboot (or a stopped and started spot host) without that order; if `qwen3-large` then crash-loops, `sudo docker compose ... up -d --force-recreate qwen3-large`. Check `docker compose ps` on the GPU host before measuring.
 - **Background processes and SSM Run Command.** A process started with `nohup ... &` inside an `aws ssm send-command` script is killed when the command ends or times out. Start long-running helpers (mock upstreams, load generators) with `setsid nohup ... &`.
-- **Ports between hosts.** The hosts security group admits 8080, 8081, 5432, 6379, 6333-6334, 8000-8003 and 9000-9001 inside the VPC; put extra services (a mock upstream, Dex for single sign-on) on one of those ports.
+- **Ports between hosts.** The hosts security group admits 8080, 8081, 8082, 5432, 6379, 6333-6334, 8000-8003 and 9000-9001 inside the VPC; put extra services (a mock upstream, Dex for single sign-on) on one of those ports.
 - DNS resolution is not blocked in the isolated subnet (see the reachability table).

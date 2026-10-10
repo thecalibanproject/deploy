@@ -157,6 +157,12 @@ variable "gateway_use_gpu_models" {
   default     = true
 }
 
+variable "gateway_run_worker" {
+  description = "Also run `caliban worker` (node runs, split mode) on the gateway host, next to standalone, on its Postgres journal; routers forward node runs to it on 8082. Off: routers answer the run API with 503."
+  type        = bool
+  default     = false
+}
+
 variable "router_count" {
   description = "Extra hosts running `caliban router` in split/snapshot mode against the gateway."
   type        = number
