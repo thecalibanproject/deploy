@@ -68,6 +68,10 @@ run "defaults_gateway_and_loadgen" {
     condition     = local.host_env["gateway"].GATEWAY_WORKER == "false" && contains(keys(aws_ssm_parameter.secret), "worker-token")
     error_message = "no node worker by default, but its token exists so turning it on changes no parameter"
   }
+  assert {
+    condition     = contains(keys(aws_ssm_parameter.secret), "tool-token-key") && aws_ssm_parameter.secret["tool-token-key"].type == "SecureString"
+    error_message = "the node tool token signing key is a generated SecureString parameter"
+  }
 }
 
 run "full_split_and_gpu" {

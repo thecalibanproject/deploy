@@ -35,6 +35,12 @@ resource "random_bytes" "kek" {
   length = 32
 }
 
+# CALIBAN_TOOL_TOKEN_KEY: the Ed25519 seed that signs node tool tokens, which is 32 random bytes,
+# base64 (what `caliban gen-tool-token-key` prints). The gateway's control plane serves its JWKS.
+resource "random_bytes" "tool_token_key" {
+  length = 32
+}
+
 # Split-mode snapshot signing key (Ed25519). The gateway derives the raw 32-byte seed for
 # CALIBAN_SNAPSHOT_SIGNING_KEY from the PKCS#8 PEM; routers derive CALIBAN_SNAPSHOT_PUBLIC_KEY
 # from the public PEM and never see the private key.
@@ -50,6 +56,7 @@ locals {
     router-token         = random_password.router_token.result
     worker-token         = random_password.worker_token.result
     kek                  = random_bytes.kek.base64
+    tool-token-key       = random_bytes.tool_token_key.base64
     snapshot-signing-pem = tls_private_key.snapshot.private_key_pem_pkcs8
   }
 }

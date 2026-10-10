@@ -21,6 +21,9 @@ set_env "$env_file" CALIBAN_ROUTER_TOKEN "$(param router-token)"
 # node runs. Always written: compose checks the variables of every service in the file.
 set_env "$env_file" CALIBAN_SNAPSHOT_PUBLIC_KEY "$(snapshot_pub_b64)"
 set_env "$env_file" CALIBAN_WORKER_TOKEN "$(param worker-token)"
+# Signs node tool tokens (standalone, the worker); MCP servers verify them against
+# http://<gateway>:8081/.well-known/caliban-tool-jwks.json.
+set_env "$env_file" CALIBAN_TOOL_TOKEN_KEY "$(param tool-token-key)"
 set_env "$env_file" TESTBED_CALIBAN_TOML "$TB/caliban.toml"
 
 # Config: the deploy repo's file, with the model pools on the GPU host when there is one.
