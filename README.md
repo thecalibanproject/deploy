@@ -48,7 +48,9 @@ deploy/
 │   └── README.md                  full offline procedure
 ├── aws/testbed/                   OpenTofu: short-lived AWS test environment (benchmarks, GPU tier,
 │                                  zero-egress install); see its README
-└── scripts/smoke.sh               health + chat completion check against a running deployment
+└── scripts/
+    ├── smoke.sh                   health + chat completion check against a running deployment
+    └── smoke-gpu12.sh             end-to-end test of the 1 × 12 GB profile on a CUDA host
 ```
 
 ## Deployment shapes
@@ -109,6 +111,7 @@ cp .env.example .env && chmod 600 .env
 
 # 4. Start the pools for your hardware tier (see "Running open models")
 docker compose --profile qwen3-small --profile embeddings --profile reranker up -d   # 1 × 24 GB GPU
+docker compose --profile gpu-12gb up -d                                             # 1 × 12 GB GPU
 docker compose --profile cpu up -d                                                  # CPU only
 
 # 5. Tenant API key, then smoke test
@@ -148,13 +151,14 @@ Serve the console over https (your TLS proxy) so the session cookie is `Secure`;
 
 Every model runs in its own engine container (compose) or pool (Helm). Caliban sees each one as a deployment-wide `[[providers]]` entry; its `[[models]]` entries describe what the model can do (tools, vision, how reasoning is switched, context). Tenant routes decide which intent goes where. The full catalogue, with every repo ID and licence checked, is core's [`config/open-models.example.toml`](https://github.com/thecalibanproject/core/blob/main/config/open-models.example.toml); `compose/config/caliban.toml` is generated from it. Parser flags, VRAM maths and background are in [research note 09](https://github.com/thecalibanproject/docs/blob/main/research/09-open-models-on-prem.md).
 
-Compose profiles: `qwen3-small`, `qwen3-large`, `qwen3-moe`, `gpt-oss`, `embeddings`, `reranker`, `cpu`, `ollama`. With no profile, only Caliban and the datastores start (BYOK only, which needs the egress override).
+Compose profiles: `qwen3-small`, `qwen3-large`, `qwen3-moe`, `gpt-oss`, `embeddings`, `reranker`, `cpu`, `gpu-12gb`, `ollama`. With no profile, only Caliban and the datastores start (BYOK only, which needs the egress override).
 
 ### Hardware tiers (estimates; benchmark per site)
 
 | Tier | Chat | Embeddings | Reranker | Compose profiles |
 |---|---|---|---|---|
 | **CPU only** (32 GB+ RAM, 16+ cores) | Qwen3.6-35B-A3B Q4_K_M GGUF on llama.cpp (20.4 GB; 3B active) | Qwen3-Embedding-0.6B on TEI (CPU) | bge-reranker-v2-m3 on TEI (CPU) | `cpu` |
+| **1 × 12 GB** (RTX 5070, RTX 4070, RTX 3060 12 GB) | Qwen3.5-9B Q4_K_M GGUF on llama.cpp CUDA (5.7 GB, 32k context) | Qwen3-Embedding-0.6B Q8_0 (llama.cpp) | Qwen3-Reranker-0.6B Q8_0 (llama.cpp) | `gpu-12gb` (see "1 × 12 GB" below) |
 | **1 × 24 GB** (L4, A10, RTX 4090) | Qwen3.5-9B on vLLM, online FP8 (about 11 GB of weights, 128k context); or gpt-oss-20b | Qwen3-Embedding-0.6B (TEI) | Qwen3-Reranker-0.6B (vLLM pooling) | `qwen3-small embeddings reranker` (or `gpt-oss …`) |
 | **1 × 48 GB** (L40S, RTX 6000 Ada) | Qwen3.8-27B-FP8 (30.9 GB; 32k context with FP8 KV next to the embedder and reranker); throughput option: Qwen3.6-35B-A3B-FP8 (`qwen3-moe`) | Qwen3-Embedding-0.6B | Qwen3-Reranker-0.6B | `qwen3-large embeddings reranker` |
 | **1 × 80 GB** (H100, A100-80G) | Qwen3.8-27B-FP8 at 262k (`QWEN3_LARGE_MAX_MODEL_LEN=262144` and the same `context_window`); or gpt-oss-120b | Qwen3-Embedding-4B (Helm) or 0.6B | Qwen3-Reranker-4B (Helm) or 0.6B | `qwen3-large embeddings reranker` |
@@ -165,8 +169,49 @@ Compose profiles: `qwen3-small`, `qwen3-large`, `qwen3-moe`, `gpt-oss`, `embeddi
 - **Sharing a GPU.** Several pools can share one GPU (`*_GPU` picks the device) as long as the vLLM `*_GPU_UTIL` fractions plus about 1.5 GB for TEI fit on the card. The `.env.example` defaults fit `qwen3-small + embeddings + reranker` on 24 GB, and `qwen3-large + embeddings + reranker` on 48 GB. For tensor parallelism, list several ids in `device_ids` and raise the `*_TP` value.
 - **Start order.** The vLLM chat pools start only once `embed` and `rerank` report healthy (`depends_on` with `condition: service_healthy`; a profile you did not enable is skipped). vLLM sizes its KV cache from a memory profile taken at start: in the second AWS run, Qwen3.8-27B profiled while the reranker was still loading, got 1.21 GiB of KV cache instead of 5.15 GiB and crash-looped. Docker restarts containers after a host reboot without this order; if the chat pool then fails to start, recreate it: `docker compose ... up -d --force-recreate qwen3-large`. In Helm the chat pools wait the same way (`modelPools.pools[].waitFor`, see the chart README).
 - **48 GB budget and context.** Measured on an L40S (45 GiB usable): `QWEN3_LARGE_GPU_UTIL=0.82` for the 27B model, `RERANK_GPU_UTIL=0.10` for the reranker and about 1.5 GB for TEI, about 2 GiB to spare. `QWEN3_LARGE_MAX_MODEL_LEN` is 32768 there: at 131072 a single full-length sequence needs 4.31 GiB of a KV cache of about 5 GiB, too little margin to start reliably, while at 32768 the cache holds about four full-length sequences. The trade-off is that requests longer than 32768 tokens (prompt plus output, thinking included) are refused, and Qwen advise at least 128k to keep thinking quality on long tasks. With the GPU to itself, or on 80 GB, raise it (131072; 262144 on 80 GB) together with `context_window` of `local/qwen3.8-27b` in `config/caliban.toml`.
-- **Profile conflicts.** Do not combine `embeddings` and `cpu`: both serve the `embed` name.
-- **Offline engines.** Every engine runs with `HF_HUB_OFFLINE=1` and the vLLM/HF telemetry opt-outs, and reads weights read-only from `$MODELS_DIR`. gpt-oss gets `TIKTOKEN_ENCODINGS_BASE` so its tokenizer does not try to download encodings at start-up.
+- **Profile conflicts.** Do not combine `embeddings` and `cpu`: both serve the `embed` name. `gpu-12gb` serves `embed` and `rerank` itself, so run it alone.
+- **Offline engines.** Every engine runs with `HF_HUB_OFFLINE=1` and the vLLM/HF telemetry opt-outs, and reads weights read-only from `$MODELS_DIR`. gpt-oss gets `TIKTOKEN_ENCODINGS_BASE` so its tokenizer does not try to download encodings at start-up. llama.cpp runs with `--offline`.
+
+### 1 × 12 GB (consumer GPU)
+
+`--profile gpu-12gb` runs the whole on-prem stack on one 12 GB card (RTX 5070, RTX 4070, RTX 3060 12 GB) with zero egress: chat, embeddings and reranking on llama.cpp CUDA (`ghcr.io/ggml-org/llama.cpp:server-cuda-b11347`, the CUDA build of the `server-b11347` image that [research note 09](https://github.com/thecalibanproject/docs/blob/main/research/09-open-models-on-prem.md) pins), next to Caliban and the datastores.
+
+```bash
+../airgap/bundle.sh fetch --profile gpu-12gb --models-dir ./models   # 7.1 GB, pinned revisions and sha256
+docker compose --profile gpu-12gb up -d --wait
+```
+
+| Role | Model (catalogue id) | Weights | Licence and source | Why (note 09) |
+|---|---|---|---|---|
+| Chat | Qwen3.5-9B, Q4_K_M GGUF (`local/qwen3.5-9b-q4`) | 5.7 GB | Apache-2.0; [`unsloth/Qwen3.5-9B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) at `3885219`, a community conversion of [`Qwen/Qwen3.5-9B`](https://huggingface.co/Qwen/Qwen3.5-9B) | The 24 GB tier's chat model (§4.3, §6) in the 4-bit GGUF §4.1 lists. Hybrid attention keeps KV at 32 KiB per token (§4.2), so 32k context fits next to the other two models. vLLM is out at 12 GB: its online FP8 needs about 11.3 GB of weights and there is no official 4-bit Qwen3.5-9B for it. |
+| Embeddings | Qwen3-Embedding-0.6B, Q8_0 GGUF (`local/qwen3-embedding-0.6b`) | 0.64 GB | Apache-2.0; [`Qwen/Qwen3-Embedding-0.6B-GGUF`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) at `370f27d` (Qwen's own GGUF) | The embedder of every GPU tier (§1.2, §6). Same model and 1024-d vectors as the `embeddings` profile, so the Qdrant collections and the calibrated cache and routing thresholds stay valid. |
+| Reranker | Qwen3-Reranker-0.6B, Q8_0 GGUF (`local/qwen3-reranker-0.6b`) | 0.64 GB | Apache-2.0; [`ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`](https://huggingface.co/ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF) at `a02f48b`, converted by the llama.cpp maintainers | The GPU tiers' reranker (§1.2, §6), served by `llama-server --reranking` (§5) instead of a second vLLM process. |
+| PII NER | nym-pii-multilingual-small, int8 ONNX (in Caliban) | 0.14 GB | MIT; see "PII NER model" below | Runs on the CPU inside Caliban, so it needs no GPU memory. |
+
+All four are Apache-2.0 or MIT, so `bundle.sh` accepts them without `--allow-licence`. `airgap/models.lock.yaml` pins each GGUF by revision and by sha256, and `fetch` refuses a mismatch. **Provenance:** only the embedder GGUF is Qwen's own. Sites that accept first-party artifacts only should convert `Qwen/Qwen3.5-9B` and `Qwen/Qwen3-Reranker-0.6B` themselves with `convert_hf_to_gguf.py` and `llama-quantize` at llama.cpp b11346, sign the result and pin its hash in the lock.
+
+The embedder and reranker are served under the `embed` and `rerank` names, so the catalogue entries of the `embeddings` and `reranker` profiles work unchanged; the chat model is the extra entry `local/qwen3.5-9b-q4` (provider `llamacpp-gpu12`), listed in every tenant route after `local/qwen3.5-9b`. Thinking is on by default and switched per request with `enable_thinking` (Caliban maps `reasoning_effort`); the reasoning comes back in `reasoning_content` (§3.2). Tool calls work through `--jinja` and Qwen's chat template.
+
+**VRAM budget** (estimates from note 09's arithmetic and llama.cpp's allocation; the measured figures are **pending the AWS run** below):
+
+| Item | Size |
+|---|---|
+| Chat weights (Q4_K_M, every layer on the GPU) | 5.3 GiB |
+| Chat KV cache: 8 full-attention layers × 4 KV heads × 256 × 2 (K and V) × 1 byte (q8_0) = 16 KiB per token, × 32768 tokens shared by 2 slots (`--kv-unified`) | 0.5 GiB |
+| Chat DeltaNet state (fixed, per slot) and compute buffers | about 0.7 GiB |
+| Embed: weights 0.6 GiB, KV 4096 × 112 KiB = 0.45 GiB, compute buffers | about 1.2 GiB |
+| Rerank: the same | about 1.2 GiB |
+| CUDA context, about 0.3 GiB per process × 3 | 0.9 GiB |
+| **Total** | **about 9.8 GiB** |
+| Left on a 12 GB card (11.9 GiB usable) | about 2.1 GiB, of which a desktop session takes 0.3 to 1.5 GiB (1.4 GiB under WSL2 on the dev box) |
+
+The knobs are in `.env.example` (`GPU12_*`). Every 32768 tokens of chat context cost 0.5 GiB with the q8_0 cache (1 GiB with `GPU12_CHAT_KV_TYPE=f16`): on a card that drives no display, `GPU12_CHAT_CTX=65536` fits (change `context_window` of `local/qwen3.5-9b-q4` with it). `GPU12_EMBED_CTX` and `GPU12_RERANK_CTX` (4096) bound one embedding input and one query plus document: longer inputs are refused rather than truncated (TEI truncates), while the catalogue still advertises 32768 and 8192. llama.cpp allocates everything at start-up, so a pool that fits starts reliably and does not grow; the chat pool still starts after `embed` and `rerank` are healthy, so a shortfall shows up in the chat pool's log, not as a crash loop of the small models.
+
+**Prefix cache and tenants.** KV stays in GPU memory: no KV tier is shared between servers or offloaded to host RAM or disk (`--cache-ram=0` on every server, no slot save path). Shared and offloaded KV tiers that key on tokens alone drop the tenant salt and let one tenant identify another's prompts by timing (arXiv 2609.38706). llama.cpp has no per-tenant `cache_salt` (note 09, §5), so this pool also starts with its prompt cache off (`--no-cache-prompt`); set `GPU12_CHAT_CACHE_PROMPT=--cache-prompt` only when one trust group uses it. Pools that take `cache_salt` (vLLM, SGLang) get Caliban's own per-tenant salt, as note 09 describes.
+
+**Smoke test** on a fresh CUDA host (Docker with the NVIDIA runtime, the Caliban image built, `hf` CLI for the fetch): `scripts/smoke-gpu12.sh` fetches and verifies the pinned weights, waits for enough free GPU memory (it polls and never stops another job), starts the stack as project `caliban-gpu12` (embed and rerank first, then the rest), mints a tenant key, then through the gateway runs a short and a 300-token completion (latency, end-to-end tokens/s, plus llama.cpp's own decode and prefill rates), a streamed request (time to first byte), a thinking request, a tool call, `caliban/auto`, embeddings (1024-d) and a rerank. It checks that the model servers have no route off the host and logged no download, records GPU memory before start, after embed and rerank, and after the chat pool, with llama.cpp's buffer sizes, and runs `docker compose down -v` at the end (`KEEP=1` keeps the stack; the weights stay in `MODELS_DIR`). Results go to `~/.cache/caliban-gpu12/results-*.txt`.
+
+**Measured** (pending AWS run): GPU memory per stage, chat latency and tokens/s, embeddings and rerank latency.
 
 ### Adding a model
 
@@ -405,7 +450,7 @@ helm rollback caliban <REVISION> -n caliban        # restores the previous manif
 ## Validation
 
 ```bash
-for p in qwen3-small qwen3-large qwen3-moe gpt-oss embeddings reranker cpu ollama; do
+for p in qwen3-small qwen3-large qwen3-moe gpt-oss embeddings reranker cpu gpu-12gb ollama; do
   docker compose -f compose/docker-compose.yml --env-file compose/.env --profile "$p" config -q || echo "FAIL $p"
 done
 docker run --rm -v "$PWD":/apps alpine/helm:3 lint --strict /apps/helm/caliban
@@ -415,7 +460,7 @@ docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliba
 docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban --set router.mode=static
 docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban --set worker.replicas=2           # needs Valkey (shipped config: yes)
 docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban --set metrics.serviceMonitor.enabled=true
-docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -x images/build.sh airgap/*.sh scripts/smoke.sh
+docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -x images/build.sh airgap/*.sh scripts/smoke.sh scripts/smoke-gpu12.sh
 docker buildx build --check -f images/caliban.Dockerfile ..
 ```
 

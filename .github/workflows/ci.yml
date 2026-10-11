@@ -268,7 +268,7 @@ jobs:
       - name: docker compose config (every profile, with and without the BYOK egress override)
         run: |
           fail=0
-          for p in "" qwen3-small qwen3-large qwen3-moe gpt-oss embeddings reranker cpu ollama; do
+          for p in "" qwen3-small qwen3-large qwen3-moe gpt-oss embeddings reranker cpu gpu-12gb ollama; do
             prof=()
             if [ -n "$p" ]; then prof=(--profile "$p"); fi
             docker compose -f compose/docker-compose.yml "${prof[@]}" config -q \
@@ -292,6 +292,42 @@ jobs:
             jq -e --arg w "$want" '.services["qwen3-large"].command | index($w)' <<<"$cfg" > /dev/null \
               || { echo "::error::qwen3-large should default to $want"; exit 1; }
           done
+      - name: The 1x12 GB profile serves chat, embed and rerank offline on one GPU
+        run: |
+          cfg=$(docker compose -f compose/docker-compose.yml --profile gpu-12gb config --format json)
+          check() { jq -e "$1" <<<"$cfg" > /dev/null || { echo "::error::gpu-12gb: $2"; exit 1; }; }
+          for s in qwen3-gpu12 embed-gpu12 rerank-gpu12; do
+            check ".services[\"$s\"].networks | keys == [\"backend\"]" "$s must sit on the internal backend network only"
+            check ".services[\"$s\"].read_only == true" "$s read-only"
+            check ".services[\"$s\"].environment.HF_HUB_OFFLINE == \"1\"" "$s offline env"
+            check ".services[\"$s\"].command | index(\"--offline\")" "$s --offline"
+            check ".services[\"$s\"].command | index(\"--cache-ram=0\")" "$s must not keep a host RAM KV tier"
+            check ".services[\"$s\"].deploy.resources.reservations.devices[0].capabilities == [\"gpu\"]" "$s GPU"
+            check ".services[\"$s\"].healthcheck.test | length > 0" "$s healthcheck"
+          done
+          # Served under the names config/caliban.toml already uses, and the chat pool loads last.
+          check '.services["embed-gpu12"].networks.backend.aliases == ["embed"]' 'embed alias'
+          check '.services["rerank-gpu12"].networks.backend.aliases == ["rerank"]' 'rerank alias'
+          for dep in embed-gpu12 rerank-gpu12; do
+            check ".services[\"qwen3-gpu12\"].depends_on[\"$dep\"].condition == \"service_healthy\"" "chat waits for $dep"
+          done
+          # 12 GB defaults (README "1 x 12 GB"); the catalogue's context_window matches the served one.
+          # No KV shared across tenants: prompt cache off, no host RAM cache tier (README "1 x 12 GB").
+          for want in --ctx-size=32768 --cache-type-k=q8_0 --n-gpu-layers=999 --no-cache-prompt --cache-ram=0; do
+            check ".services[\"qwen3-gpu12\"].command | index(\"$want\")" "chat should default to $want"
+          done
+          grep -qF 'context_window = 32768                # llama.cpp --ctx-size (GPU12_CHAT_CTX)' \
+            compose/config/caliban.toml || { echo "::error::local/qwen3.5-9b-q4 context_window"; exit 1; }
+          # The profile brings its own embed and rerank: none of the other model services start.
+          [ "$(jq -r '.services | keys | sort | join(" ")' <<<"$cfg")" = \
+            "caliban embed-gpu12 postgres qdrant qwen3-gpu12 rerank-gpu12 valkey" ] \
+            || { echo "::error::gpu-12gb starts unexpected services"; exit 1; }
+          GPU12_CHAT_CACHE_PROMPT=--cache-prompt docker compose -f compose/docker-compose.yml \
+            --profile gpu-12gb config --format json | jq -e '.services["qwen3-gpu12"].command
+            | index("--cache-prompt") and index("--cache-ram=0")' > /dev/null \
+            || { echo "::error::GPU12_CHAT_CACHE_PROMPT"; exit 1; }
+          grep -qE '^gpu-12gb +LLAMACPP_CUDA_IMAGE +ghcr.io/ggml-org/llama.cpp:server-cuda-b11347$' airgap/images.lock \
+            || { echo "::error::airgap/images.lock must pin LLAMACPP_CUDA_IMAGE"; exit 1; }
       - name: Standalone keeps its usage spool on a volume and gets numeric node settings
         run: |
           cfg=$(docker compose -f compose/docker-compose.yml config --format json)
@@ -337,6 +373,6 @@ jobs:
       - name: shellcheck
         run: >-
           docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.11.0
-          -x images/build.sh airgap/bundle.sh airgap/load.sh scripts/smoke.sh
+          -x images/build.sh airgap/bundle.sh airgap/load.sh scripts/smoke.sh scripts/smoke-gpu12.sh
       # Lints the Dockerfile only; no layers are built, so the core/web siblings are not needed.
       - run: docker buildx build --check -f images/caliban.Dockerfile ..
