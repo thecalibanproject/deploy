@@ -48,6 +48,8 @@ deploy/
 │   └── README.md                  full offline procedure
 ├── aws/testbed/                   OpenTofu: short-lived AWS test environment (benchmarks, GPU tier,
 │                                  zero-egress install); see its README
+├── e2e/health-triage/             end-to-end test of the product flow (MongoDB catalogue, caliban/auto,
+│                                  triage node, PII, evals, metering, audit); see its README
 └── scripts/
     ├── smoke.sh                   health + chat completion check against a running deployment
     └── smoke-gpu12.sh             end-to-end test of the 1 × 12 GB profile on a CUDA host
@@ -465,11 +467,13 @@ docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliba
 docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban --set router.mode=static
 docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban --set worker.replicas=2           # needs Valkey (shipped config: yes)
 docker run --rm -v "$PWD":/apps alpine/helm:3 template caliban /apps/helm/caliban --set metrics.serviceMonitor.enabled=true
-docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -x images/build.sh airgap/*.sh scripts/smoke.sh scripts/smoke-gpu12.sh
+docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:stable -x images/build.sh airgap/*.sh scripts/smoke.sh scripts/smoke-gpu12.sh e2e/health-triage/e2e.sh
 docker buildx build --check -f images/caliban.Dockerfile ..
 ```
 
 Run these from the repo root. The last command uses the parent directory (holding `core` and `web`) as build context.
+
+**End to end.** `e2e/health-triage/e2e.sh all` runs the whole product flow on one machine, without a GPU: a MongoDB replica set with a synthetic health marketplace, a datasource and its ontology, a triage node with evals and the promotion gate, then requests through `caliban/auto` in English, French and Arabic with PII, a human step and a prompt injection in catalogue data, checked against the run journal, MongoDB's profiler, what the model received, metering and the audit log. `e2e.sh down` removes it. [`e2e/health-triage/README.md`](e2e/health-triage/README.md); on the AWS testbed's L40S, [`RUN-ON-TESTBED.md`](e2e/health-triage/RUN-ON-TESTBED.md).
 
 ## Related repositories
 

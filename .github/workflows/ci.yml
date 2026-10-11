@@ -372,6 +372,36 @@ jobs:
             and .services["caliban-worker"].read_only == true
             and .services["caliban-worker"].depends_on.caliban.condition == "service_healthy"' <<<"$cfg" > /dev/null \
             || { echo "::error::caliban-worker"; exit 1; }
+      - name: Health triage e2e overlay, locally and on the testbed gateway
+        env:
+          CALIBAN_SNAPSHOT_SIGNING_KEY: ci-placeholder
+          CALIBAN_SNAPSHOT_PUBLIC_KEY: ci-placeholder
+          CALIBAN_ROUTER_TOKEN: ci-placeholder
+          CALIBAN_WORKER_TOKEN: ci-placeholder
+          TESTBED_BIND: 10.42.0.10
+          E2E_MONGO_KEYFILE: ci-placeholder
+          E2E_CALIBAN_TOML: /tmp/e2e/caliban.toml
+          E2E_WORK_DIR: /tmp/e2e
+        run: |
+          export E2E_DIR="$PWD/e2e/health-triage"
+          for testbed in "" aws/testbed/bootstrap/compose.testbed-gateway.yml; do
+            files=(-f compose/docker-compose.yml)
+            if [ -n "$testbed" ]; then files+=(-f "$testbed"); fi
+            files+=(-f "$E2E_DIR/docker-compose.e2e.yml")
+            cfg=$(docker compose "${files[@]}" config --format json)
+            check() { jq -e "$1" <<<"$cfg" > /dev/null || { echo "::error::e2e overlay (${testbed:-local}): $2"; exit 1; }; }
+            check '[.services.caliban.volumes[] | select(.target == "/etc/caliban/caliban.toml")]
+              | length == 1 and .[0].source == "/tmp/e2e/caliban.toml"' 'caliban reads the rendered config'
+            for s in caliban-e2e-mongo caliban-e2e-mongo-analytics; do
+              check ".services[\"$s\"].networks | keys == [\"backend\"]" "$s sits on the internal backend network only"
+              check ".services[\"$s\"].ports == null" "$s publishes no port"
+            done
+            check '.services["caliban-e2e-model"].ports == null' 'the e2e model publishes no port'
+            check '.services["caliban-e2e-mongo"].image | test("^mongo:8\\.0\\.[0-9]+$")' 'MongoDB image pinned'
+          done
+          python3 -m py_compile "$E2E_DIR"/lib/*.py "$E2E_DIR"/mock/model.py
+          python3 -c 'import json, sys; [json.load(open(f, encoding="utf-8")) for f in sys.argv[1:]]' \
+            "$E2E_DIR"/node/*.json "$E2E_DIR"/ontology/*.json
 
   shell:
     name: Shellcheck and Dockerfile check
@@ -382,5 +412,6 @@ jobs:
         run: >-
           docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.11.0
           -x images/build.sh airgap/bundle.sh airgap/load.sh scripts/smoke.sh scripts/smoke-gpu12.sh
+          e2e/health-triage/e2e.sh
       # Lints the Dockerfile only; no layers are built, so the core/web siblings are not needed.
       - run: docker buildx build --check -f images/caliban.Dockerfile ..
