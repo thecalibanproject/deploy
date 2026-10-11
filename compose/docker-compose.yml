@@ -548,7 +548,7 @@ services:
   # unchanged, and the chat model is local/qwen3.5-9b-q4. VRAM budget: README "1 x 12 GB".
   # KV cache stays in GPU memory, never shared or offloaded. llama.cpp has no tenant cache_salt
   # (note 09, section 5), so its prompt cache is off by default (--no-cache-prompt) and its host
-  # RAM prompt cache tier is always off (--cache-ram=0): shared or offloaded KV tiers that key on
+  # RAM prompt cache tier is always off (--cache-ram 0): shared or offloaded KV tiers that key on
   # tokens alone leak prompts across tenants by timing (arXiv 2609.38706). Only a pool that serves
   # one trust group may set GPU12_CHAT_CACHE_PROMPT=--cache-prompt (per-slot, in GPU memory).
   # --port is always explicit: llama.cpp builds from b11521 listen on 9931 by default.
@@ -557,22 +557,34 @@ services:
     <<: *hardening
     profiles: [gpu-12gb]
     image: ${LLAMACPP_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11347}
+    # Flags and values are separate items: llama.cpp b11347 does not parse --flag=value here.
     command:
-      - --model=/models/${GPU12_CHAT_GGUF:-qwen3.5-9b-gguf/Qwen3.5-9B-Q4_K_M.gguf}
-      - --alias=${GPU12_CHAT_ALIAS:-unsloth/Qwen3.5-9B-GGUF}
-      - --host=0.0.0.0
-      - --port=8000
-      - --n-gpu-layers=999
-      - --ctx-size=${GPU12_CHAT_CTX:-32768}
-      - --parallel=${GPU12_CHAT_PARALLEL:-2}
+      - --model
+      - /models/${GPU12_CHAT_GGUF:-qwen3.5-9b-gguf/Qwen3.5-9B-Q4_K_M.gguf}
+      - --alias
+      - ${GPU12_CHAT_ALIAS:-unsloth/Qwen3.5-9B-GGUF}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --n-gpu-layers
+      - "999"
+      - --ctx-size
+      - ${GPU12_CHAT_CTX:-32768}
+      - --parallel
+      - ${GPU12_CHAT_PARALLEL:-2}
       # One KV pool shared by the slots, so a single request can use the whole --ctx-size
       # (context_window in config/caliban.toml) instead of ctx-size / parallel.
       - --kv-unified
-      - --flash-attn=on
-      - --cache-type-k=${GPU12_CHAT_KV_TYPE:-q8_0}
-      - --cache-type-v=${GPU12_CHAT_KV_TYPE:-q8_0}
+      - --flash-attn
+      - "on"
+      - --cache-type-k
+      - ${GPU12_CHAT_KV_TYPE:-q8_0}
+      - --cache-type-v
+      - ${GPU12_CHAT_KV_TYPE:-q8_0}
       - ${GPU12_CHAT_CACHE_PROMPT:---no-cache-prompt}
-      - --cache-ram=0
+      - --cache-ram
+      - "0"
       - --jinja
       - --no-webui
       - --offline
@@ -609,20 +621,33 @@ services:
     profiles: [gpu-12gb]
     image: ${LLAMACPP_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11347}
     command:
-      - --model=/models/qwen3-embedding-0.6b-gguf/Qwen3-Embedding-0.6B-Q8_0.gguf
-      - --alias=Qwen/Qwen3-Embedding-0.6B
-      - --host=0.0.0.0
-      - --port=8000
+      - --model
+      - /models/qwen3-embedding-0.6b-gguf/Qwen3-Embedding-0.6B-Q8_0.gguf
+      - --alias
+      - Qwen/Qwen3-Embedding-0.6B
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
       - --embedding
-      - --pooling=last
-      - --n-gpu-layers=999
+      - --pooling
+      - last
+      - --n-gpu-layers
+      - "999"
       # One input must fit in a micro-batch: longer inputs are refused, not truncated as on TEI.
-      - --ctx-size=${GPU12_EMBED_CTX:-4096}
-      - --batch-size=${GPU12_EMBED_CTX:-4096}
-      - --ubatch-size=${GPU12_EMBED_CTX:-4096}
-      - --parallel=1
-      - --flash-attn=on
-      - --cache-ram=0
+      # The compute buffers grow with this size: 4096 cost 3.6 GiB per server on an L4.
+      - --ctx-size
+      - ${GPU12_EMBED_CTX:-2048}
+      - --batch-size
+      - ${GPU12_EMBED_CTX:-2048}
+      - --ubatch-size
+      - ${GPU12_EMBED_CTX:-2048}
+      - --parallel
+      - "1"
+      - --flash-attn
+      - "on"
+      - --cache-ram
+      - "0"
       - --no-webui
       - --offline
     environment:
@@ -654,19 +679,30 @@ services:
     profiles: [gpu-12gb]
     image: ${LLAMACPP_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11347}
     command:
-      - --model=/models/qwen3-reranker-0.6b-gguf/qwen3-reranker-0.6b-q8_0.gguf
-      - --alias=Qwen/Qwen3-Reranker-0.6B
-      - --host=0.0.0.0
-      - --port=8000
+      - --model
+      - /models/qwen3-reranker-0.6b-gguf/qwen3-reranker-0.6b-q8_0.gguf
+      - --alias
+      - Qwen/Qwen3-Reranker-0.6B
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
       - --reranking
-      - --n-gpu-layers=999
-      # A query plus one document must fit in a micro-batch.
-      - --ctx-size=${GPU12_RERANK_CTX:-4096}
-      - --batch-size=${GPU12_RERANK_CTX:-4096}
-      - --ubatch-size=${GPU12_RERANK_CTX:-4096}
-      - --parallel=1
-      - --flash-attn=on
-      - --cache-ram=0
+      - --n-gpu-layers
+      - "999"
+      # A query plus one document must fit in a micro-batch (see embed-gpu12 for the cost).
+      - --ctx-size
+      - ${GPU12_RERANK_CTX:-1024}
+      - --batch-size
+      - ${GPU12_RERANK_CTX:-1024}
+      - --ubatch-size
+      - ${GPU12_RERANK_CTX:-1024}
+      - --parallel
+      - "1"
+      - --flash-attn
+      - "on"
+      - --cache-ram
+      - "0"
       - --no-webui
       - --offline
     environment:

@@ -296,12 +296,17 @@ jobs:
         run: |
           cfg=$(docker compose -f compose/docker-compose.yml --profile gpu-12gb config --format json)
           check() { jq -e "$1" <<<"$cfg" > /dev/null || { echo "::error::gpu-12gb: $2"; exit 1; }; }
+          # llama.cpp b11347 does not parse --flag=value, so flags and values are separate items.
+          flag() { check ".services[\"$1\"].command as \$c | (\$c | index(\"$2\")) as \$i
+            | \$i != null and \$c[\$i + 1] == \"$3\"" "$1 should run with $2 $3"; }
           for s in qwen3-gpu12 embed-gpu12 rerank-gpu12; do
             check ".services[\"$s\"].networks | keys == [\"backend\"]" "$s must sit on the internal backend network only"
             check ".services[\"$s\"].read_only == true" "$s read-only"
             check ".services[\"$s\"].environment.HF_HUB_OFFLINE == \"1\"" "$s offline env"
             check ".services[\"$s\"].command | index(\"--offline\")" "$s --offline"
-            check ".services[\"$s\"].command | index(\"--cache-ram=0\")" "$s must not keep a host RAM KV tier"
+            check ".services[\"$s\"].command | all(test(\"^--[a-z-]+=\") | not)" "$s: no --flag=value items"
+            flag "$s" --port 8000
+            flag "$s" --cache-ram 0         # no host RAM KV tier
             check ".services[\"$s\"].deploy.resources.reservations.devices[0].capabilities == [\"gpu\"]" "$s GPU"
             check ".services[\"$s\"].healthcheck.test | length > 0" "$s healthcheck"
           done
@@ -313,9 +318,12 @@ jobs:
           done
           # 12 GB defaults (README "1 x 12 GB"); the catalogue's context_window matches the served one.
           # No KV shared across tenants: prompt cache off, no host RAM cache tier (README "1 x 12 GB").
-          for want in --ctx-size=32768 --cache-type-k=q8_0 --n-gpu-layers=999 --no-cache-prompt --cache-ram=0; do
-            check ".services[\"qwen3-gpu12\"].command | index(\"$want\")" "chat should default to $want"
-          done
+          flag qwen3-gpu12 --ctx-size 32768
+          flag qwen3-gpu12 --cache-type-k q8_0
+          flag qwen3-gpu12 --n-gpu-layers 999
+          check '.services["qwen3-gpu12"].command | index("--no-cache-prompt")' 'chat prompt cache off by default'
+          # Small micro-batches keep the embed and rerank compute buffers in budget (4096 used 3.6 GiB each).
+          for f in --ctx-size --ubatch-size; do flag embed-gpu12 "$f" 2048; flag rerank-gpu12 "$f" 1024; done
           grep -qF 'context_window = 32768                # llama.cpp --ctx-size (GPU12_CHAT_CTX)' \
             compose/config/caliban.toml || { echo "::error::local/qwen3.5-9b-q4 context_window"; exit 1; }
           # The profile brings its own embed and rerank: none of the other model services start.
@@ -324,7 +332,7 @@ jobs:
             || { echo "::error::gpu-12gb starts unexpected services"; exit 1; }
           GPU12_CHAT_CACHE_PROMPT=--cache-prompt docker compose -f compose/docker-compose.yml \
             --profile gpu-12gb config --format json | jq -e '.services["qwen3-gpu12"].command
-            | index("--cache-prompt") and index("--cache-ram=0")' > /dev/null \
+            | index("--cache-prompt") and index("--cache-ram")' > /dev/null \
             || { echo "::error::GPU12_CHAT_CACHE_PROMPT"; exit 1; }
           grep -qE '^gpu-12gb +LLAMACPP_CUDA_IMAGE +ghcr.io/ggml-org/llama.cpp:server-cuda-b11347$' airgap/images.lock \
             || { echo "::error::airgap/images.lock must pin LLAMACPP_CUDA_IMAGE"; exit 1; }
