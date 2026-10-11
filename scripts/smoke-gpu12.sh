@@ -12,7 +12,10 @@
 # (pip install -U huggingface_hub). The Caliban image must exist locally (images/build.sh).
 #
 # Env:
-#   MODELS_DIR       weights, kept between runs (default ~/.cache/caliban-models)
+#   MODELS_DIR       weights, kept between runs (default /srv/caliban/models as root, else
+#                    ~/.cache/caliban-models). The containers run as other users (Caliban as
+#                    65532), so the script makes the tree world-readable and every parent
+#                    directory must be traversable by others (o+x): a 0700 or 0750 home is not.
 #   WORK_DIR         generated env file and results (default ~/.cache/caliban-gpu12)
 #   PROJECT          compose project name (default caliban-gpu12)
 #   CALIBAN_IMAGE    image repository (default caliban/caliban)
@@ -28,11 +31,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# HOME is unset under SSM Run Command and some systemd units.
+HOME_DIR="${HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}"
+HOME_DIR="${HOME_DIR:-/root}"
+export HOME="$HOME_DIR"   # for docker, hf and python, which look for config under it
+if [[ "$(id -u)" == 0 ]]; then DEFAULT_MODELS_DIR=/srv/caliban/models
+else DEFAULT_MODELS_DIR="$HOME_DIR/.cache/caliban-models"; fi
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_DIR="$REPO/compose"
 
-MODELS_DIR="${MODELS_DIR:-$HOME/.cache/caliban-models}"
-WORK_DIR="${WORK_DIR:-$HOME/.cache/caliban-gpu12}"
+MODELS_DIR="${MODELS_DIR:-$DEFAULT_MODELS_DIR}"
+WORK_DIR="${WORK_DIR:-$HOME_DIR/.cache/caliban-gpu12}"
 PROJECT="${PROJECT:-caliban-gpu12}"
 CALIBAN_IMAGE="${CALIBAN_IMAGE:-caliban/caliban}"
 CALIBAN_VERSION="${CALIBAN_VERSION:-0.1.0}"
@@ -111,15 +120,25 @@ if [[ "$PII" != 0 ]]; then
   else note "PII NER model not found (set ML_DIR or PII=0); starting without it"; fi
 fi
 [[ "$fail" == 0 ]] || die "weights do not match airgap/models.lock.yaml"
+# Files fetched under umask 077 (or by fetch_pii_ner.py's temp files) are 0600; the model
+# servers and Caliban (uid 65532) read them through a read-only bind mount.
+chmod -R a+rX "$MODELS_DIR"
+d="$MODELS_DIR"
+while [[ "$d" != / ]]; do
+  [[ "$(stat -c %A "$d")" == *[xt] ]] \
+    || die "$d is not traversable by other users, so the containers cannot read $MODELS_DIR: chmod o+x it, or set MODELS_DIR elsewhere (e.g. /srv/caliban/models)"
+  d="$(dirname "$d")"
+done
 
 # ── 2. Env file (secrets generated once, kept in WORK_DIR, mode 600) ──
 if [[ ! -f "$ENV_FILE" ]]; then
-  umask 077
-  {
+  (
+    umask 077
     grep -vE '^(CALIBAN_ADMIN_TOKEN|CALIBAN_KEK|POSTGRES_PASSWORD|VALKEY_PASSWORD)=' "$COMPOSE_DIR/.env.example"
     printf 'CALIBAN_ADMIN_TOKEN=%s\nCALIBAN_KEK=%s\nPOSTGRES_PASSWORD=%s\nVALKEY_PASSWORD=%s\n' \
       "$(openssl rand -hex 32)" "$(openssl rand -base64 32)" "$(openssl rand -hex 24)" "$(openssl rand -hex 24)"
-  } > "$ENV_FILE"
+  ) > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
 fi
 set_env() {  # KEY VALUE: replace the line (or append)
   local tmp; tmp="$(mktemp)"
@@ -160,12 +179,16 @@ done
 note "before start: used $used MiB, free $free MiB of $total MiB"
 base_used=$used
 
-# ── 4. Start: embed and rerank first, then the chat pool and Caliban ──
+# ── 4. Start: embed, then rerank, then the chat pool and Caliban (one at a time, to measure) ──
 say "[start] project $PROJECT"
 t0=$(date +%s)
-dc up -d --wait --wait-timeout 600 embed-gpu12 rerank-gpu12
-read -r used free total < <(vram)
-note "embed + rerank loaded: +$((used - base_used)) MiB (free $free MiB)"
+prev=$base_used
+for s in embed-gpu12 rerank-gpu12; do
+  dc up -d --wait --wait-timeout 600 "$s"
+  read -r used free total < <(vram)
+  note "$s loaded: +$((used - prev)) MiB (free $free MiB)"
+  prev=$used
+done
 small_used=$used
 dc up -d --wait --wait-timeout 900
 read -r used free total < <(vram)
@@ -173,7 +196,7 @@ ok "stack healthy in $(( $(date +%s) - t0 ))s"
 note "chat pool loaded: +$((used - small_used)) MiB; stack total +$((used - base_used)) MiB; free $free MiB of $total MiB"
 for s in qwen3-gpu12 embed-gpu12 rerank-gpu12; do
   dc logs --no-color "$s" 2>/dev/null \
-    | grep -E 'CUDA0 (model|KV|RS|compute) buffer size' | sed "s/^/        $s: /" | tee -a "$RESULTS" || true
+    | grep -E 'buffer size' | sed "s/^/        $s: /" | tee -a "$RESULTS" || true
 done
 
 # ── 5. Tenant key ──
@@ -238,8 +261,11 @@ else bad "tool call -> HTTP $CODE: ${BODY:0:300}"; fi
 
 post /v1/chat/completions '{"model":"caliban/auto","reasoning_effort":"none","max_tokens":16,
   "messages":[{"role":"user","content":"Hello"}],"caliban":{"cache":"off"}}'
-if [[ "$CODE" == 200 ]]; then ok "caliban/auto -> $(grep -i '^x-caliban-model:' <<<"$HDRS" | tr -d '\r' | cut -d' ' -f2-) (${SECS}s)"
-else bad "caliban/auto -> HTTP $CODE: ${BODY:0:300}"; fi
+# Every tenant route lists local/qwen3.5-9b-q4, and it is the only chat pool running.
+routed="$(grep -i '^x-caliban-routed-model:' <<<"$HDRS" | tr -d '\r' | cut -d' ' -f2- || true)"
+intent="$(grep -i '^x-caliban-intent:' <<<"$HDRS" | tr -d '\r' | cut -d' ' -f2- || true)"
+if [[ "$CODE" == 200 && "$routed" == "$CHAT_MODEL" ]]; then ok "caliban/auto -> $routed (intent ${intent:-none}, ${SECS}s)"
+else bad "caliban/auto -> HTTP $CODE, x-caliban-routed-model '${routed}' (want $CHAT_MODEL): ${BODY:0:200}"; fi
 
 # ── 7. Embeddings and rerank through the gateway ──
 say "[embeddings, rerank]"
