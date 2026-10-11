@@ -43,8 +43,10 @@ x-llm-offline-env: &llm-offline-env
 
 
 # vLLM pools (OpenAI-compatible server). Per-pool command/volumes/devices are set below.
+# v0.31.0 fixes a prefix-cache collision between a cache_salt and a LoRA adapter name with the
+# same value (vLLM #51899, #59335); Caliban sets the salt itself (docs research note 09, section 5).
 x-vllm: &vllm
-  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.30.0}
+  image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.31.0}
   entrypoint: ["vllm", "serve"]
   environment:
     <<: *llm-offline-env

@@ -592,7 +592,9 @@ modelPools:
     image:
       registry: ""          # global.imageRegistry wins when set
       repository: vllm/vllm-openai
-      tag: v0.30.0
+      # v0.31.0: a cache_salt and a LoRA adapter name with the same value no longer share KV
+      # (vLLM #51899, #59335). Caliban always sets its own salt, never the client's.
+      tag: v0.31.0
       digest: ""
       pullPolicy: IfNotPresent
     command: [vllm, serve]  # set `command: []` on a pool to use the image entrypoint (TEI, llama.cpp)

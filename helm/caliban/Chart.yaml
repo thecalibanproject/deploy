@@ -10,7 +10,7 @@ annotations:
   # Images this chart deploys, for air-gap mirroring tools.
   caliban.io/images: |
     - caliban/caliban:0.1.0
-    - vllm/vllm-openai:v0.30.0
+    - vllm/vllm-openai:v0.31.0
     - ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.4
     - ghcr.io/ggml-org/llama.cpp:server-b11347
     - lmsysorg/sglang:v0.5.21
