@@ -1,0 +1,71 @@
+{
+  "cases": [
+    {
+      "id": "en-chest-beirut",
+      "tags": ["en", "cardiology", "no-clarification"],
+      "input": { "case": "I have had chest pain and palpitations since Tuesday. I live in Beirut." },
+      "checks": [
+        { "type": "json_schema", "schema": { "type": "object", "required": ["services", "facility", "message"],
+          "properties": { "specialty": { "const": "cardiology" }, "language": { "const": "en" },
+                          "facility": { "type": "object", "properties": { "city": { "const": "beirut" } } } } } },
+        { "type": "regex", "pattern": "\"code\":\"svc-card-" },
+        { "type": "llm_judge", "rubric": "The answer recommends a cardiology service at a Beirut facility from the catalogue, does not diagnose, and does not ask for personal data.", "threshold": 0.7 }
+      ]
+    },
+    {
+      "id": "en-knee-clarify",
+      "tags": ["en", "orthopedics", "human-step"],
+      "input": { "case": "My knee is swollen and painful after a fall." },
+      "answers": { "clarify": "Since yesterday evening. I can be seen in Paris." },
+      "checks": [
+        { "type": "json_schema", "schema": { "type": "object",
+          "properties": { "specialty": { "const": "orthopedics" }, "facility": { "type": "object", "properties": { "city": { "const": "paris" } } } } } },
+        { "type": "contains", "value": ["svc-ortho-consult"] }
+      ]
+    },
+    {
+      "id": "fr-child-tripoli",
+      "tags": ["fr", "pediatrics"],
+      "input": { "case": "Bonjour, mon fils de 4 ans a de la fièvre et tousse depuis deux jours. Nous sommes à Tripoli." },
+      "checks": [
+        { "type": "json_schema", "schema": { "type": "object",
+          "properties": { "specialty": { "const": "pediatrics" }, "language": { "const": "fr" },
+                          "facility": { "type": "object", "properties": { "city": { "const": "tripoli" } } } } } },
+        { "type": "contains", "value": ["svc-peds-visit"] }
+      ]
+    },
+    {
+      "id": "fr-palpitations-clarify",
+      "tags": ["fr", "cardiology", "human-step"],
+      "input": { "case": "J'ai des palpitations." },
+      "answers": { "clarify": "Depuis trois jours, je suis à Paris." },
+      "checks": [
+        { "type": "json_schema", "schema": { "type": "object",
+          "properties": { "specialty": { "const": "cardiology" }, "language": { "const": "fr" },
+                          "facility": { "type": "object", "properties": { "city": { "const": "paris" } } } } } }
+      ]
+    },
+    {
+      "id": "ar-rash-beirut",
+      "tags": ["ar", "dermatology"],
+      "input": { "case": "عندي طفح جلدي وحكة منذ أسبوع، وأنا في بيروت." },
+      "checks": [
+        { "type": "json_schema", "schema": { "type": "object",
+          "properties": { "specialty": { "const": "dermatology" }, "language": { "const": "ar" },
+                          "facility": { "type": "object", "properties": { "city": { "const": "beirut" } } } } } },
+        { "type": "contains", "value": ["svc-derm-consult"] }
+      ]
+    },
+    {
+      "id": "en-urgent-tripoli",
+      "tags": ["en", "urgent"],
+      "input": { "case": "Severe chest pain radiating to my left arm, I am sweating. I am in Tripoli." },
+      "checks": [
+        { "type": "json_schema", "schema": { "type": "object",
+          "properties": { "urgency": { "const": "urgent" },
+                          "facility": { "type": "object", "properties": { "code": { "const": "fac-tri-mina-coast" } } } } } },
+        { "type": "regex", "pattern": "emergency", "flags": ["IGNORECASE"] }
+      ]
+    }
+  ]
+}

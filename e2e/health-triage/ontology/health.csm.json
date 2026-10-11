@@ -1,0 +1,866 @@
+{
+  "datasource": "health",
+  "elements": [
+    {
+      "id": "Service",
+      "name": "Service",
+      "description": "A service of the marketplace catalogue",
+      "synonyms": [
+        "prestation",
+        "خدمة"
+      ],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "entity",
+      "spec": {
+        "binding": {
+          "type": "root",
+          "datasource": "health",
+          "collection": "services"
+        },
+        "keys": [
+          "_id"
+        ]
+      }
+    },
+    {
+      "id": "Service.service_code",
+      "name": "Service.service_code",
+      "description": "Catalogue code of the service",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "_id",
+        "column": "service_code",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.specialty",
+      "name": "Service.specialty",
+      "description": "Medical specialty (cardiology, pediatrics, ...)",
+      "synonyms": [
+        "spécialité",
+        "تخصص"
+      ],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "specialty",
+        "column": "specialty",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.category",
+      "name": "Service.category",
+      "description": "clinical, administrative or billing",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "category",
+        "column": "category",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.urgency_fit",
+      "name": "Service.urgency_fit",
+      "description": "Urgency the service is meant for: routine, soon or urgent",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "urgency_fit",
+        "column": "urgency_fit",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.service_name_en",
+      "name": "Service.service_name_en",
+      "description": "Service name (en)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "name.en",
+        "column": "service_name_en",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.service_name_fr",
+      "name": "Service.service_name_fr",
+      "description": "Service name (fr)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "name.fr",
+        "column": "service_name_fr",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.service_name_ar",
+      "name": "Service.service_name_ar",
+      "description": "Service name (ar)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "name.ar",
+        "column": "service_name_ar",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.service_description_en",
+      "name": "Service.service_description_en",
+      "description": "Service description (en); free text from the catalogue",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "description.en",
+        "column": "service_description_en",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Service.duration_min",
+      "name": "Service.duration_min",
+      "description": "Typical duration in minutes",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "duration_min",
+        "column": "duration_min",
+        "data_type": "number"
+      }
+    },
+    {
+      "id": "Service.telehealth",
+      "name": "Service.telehealth",
+      "description": "Available as a remote consultation",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Service",
+        "path": "telehealth",
+        "column": "telehealth",
+        "data_type": "bool"
+      }
+    },
+    {
+      "id": "Offer",
+      "name": "Offer",
+      "description": "Where a service is offered, at what price",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "entity",
+      "spec": {
+        "binding": {
+          "type": "embedded",
+          "parent": "Service",
+          "array_path": "offers"
+        },
+        "keys": []
+      }
+    },
+    {
+      "id": "Offer.facility_id",
+      "name": "Offer.facility_id",
+      "description": "Facility code of the offer",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Offer",
+        "path": "facility_id",
+        "column": "facility_id",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Offer.offer_facility",
+      "name": "Offer.offer_facility",
+      "description": "Facility name (en) of the offer",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Offer",
+        "path": "offer_facility",
+        "column": "offer_facility",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Offer.offer_city",
+      "name": "Offer.offer_city",
+      "description": "City of the offer: beirut, tripoli or paris",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Offer",
+        "path": "offer_city",
+        "column": "offer_city",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Offer.price_usd",
+      "name": "Offer.price_usd",
+      "description": "Price of the service at that facility, USD",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Offer",
+        "path": "price_usd",
+        "column": "price_usd",
+        "data_type": "number"
+      }
+    },
+    {
+      "id": "Offer.offer_languages",
+      "name": "Offer.offer_languages",
+      "description": "Languages spoken, comma separated",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Offer",
+        "path": "offer_languages",
+        "column": "offer_languages",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Offer.insurance",
+      "name": "Offer.insurance",
+      "description": "Insurers accepted, comma separated",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Offer",
+        "path": "insurance",
+        "column": "insurance",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility",
+      "name": "Facility",
+      "description": "A hospital or clinic",
+      "synonyms": [
+        "établissement",
+        "منشأة صحية"
+      ],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "entity",
+      "spec": {
+        "binding": {
+          "type": "root",
+          "datasource": "health",
+          "collection": "facilities"
+        },
+        "keys": [
+          "_id"
+        ]
+      }
+    },
+    {
+      "id": "Facility.facility_code",
+      "name": "Facility.facility_code",
+      "description": "Facility code",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "_id",
+        "column": "facility_code",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.city",
+      "name": "Facility.city",
+      "description": "City: beirut, tripoli or paris",
+      "synonyms": [
+        "ville",
+        "مدينة"
+      ],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "city",
+        "column": "city",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.district",
+      "name": "Facility.district",
+      "description": "District",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "district",
+        "column": "district",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.facility_type",
+      "name": "Facility.facility_type",
+      "description": "hospital or clinic",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "type",
+        "column": "facility_type",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.facility_name_en",
+      "name": "Facility.facility_name_en",
+      "description": "Facility name (en)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "facility_name.en",
+        "column": "facility_name_en",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.facility_name_fr",
+      "name": "Facility.facility_name_fr",
+      "description": "Facility name (fr)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "facility_name.fr",
+        "column": "facility_name_fr",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.facility_name_ar",
+      "name": "Facility.facility_name_ar",
+      "description": "Facility name (ar)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "facility_name.ar",
+        "column": "facility_name_ar",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.open_24h",
+      "name": "Facility.open_24h",
+      "description": "Open day and night",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "open_24h",
+        "column": "open_24h",
+        "data_type": "bool"
+      }
+    },
+    {
+      "id": "Facility.hours",
+      "name": "Facility.hours",
+      "description": "Opening hours",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "hours",
+        "column": "hours",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Facility.emergency_available",
+      "name": "Facility.emergency_available",
+      "description": "Has an emergency department",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "emergency.available",
+        "column": "emergency_available",
+        "data_type": "bool"
+      }
+    },
+    {
+      "id": "Facility.emergency_beds_free",
+      "name": "Facility.emergency_beds_free",
+      "description": "Emergency beds free now",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Facility",
+        "path": "emergency.beds_free",
+        "column": "emergency_beds_free",
+        "data_type": "number"
+      }
+    },
+    {
+      "id": "Department",
+      "name": "Department",
+      "description": "A department of a facility",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "entity",
+      "spec": {
+        "binding": {
+          "type": "embedded",
+          "parent": "Facility",
+          "array_path": "departments"
+        },
+        "keys": []
+      }
+    },
+    {
+      "id": "Department.dept_specialty",
+      "name": "Department.dept_specialty",
+      "description": "Specialty of the department",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Department",
+        "path": "specialty",
+        "column": "dept_specialty",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Department.wait_days",
+      "name": "Department.wait_days",
+      "description": "Typical wait for a non-urgent appointment, days",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Department",
+        "path": "wait_days",
+        "column": "wait_days",
+        "data_type": "number"
+      }
+    },
+    {
+      "id": "Department.on_call",
+      "name": "Department.on_call",
+      "description": "A specialist is on call day and night",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Department",
+        "path": "on_call",
+        "column": "on_call",
+        "data_type": "bool"
+      }
+    },
+    {
+      "id": "Slot",
+      "name": "Slot",
+      "description": "An appointment slot",
+      "synonyms": [
+        "créneau",
+        "موعد"
+      ],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "entity",
+      "spec": {
+        "binding": {
+          "type": "root",
+          "datasource": "health",
+          "collection": "slots"
+        },
+        "keys": [
+          "_id"
+        ]
+      }
+    },
+    {
+      "id": "Slot.slot_code",
+      "name": "Slot.slot_code",
+      "description": "Slot code",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "_id",
+        "column": "slot_code",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Slot.slot_facility_id",
+      "name": "Slot.slot_facility_id",
+      "description": "Facility code of the slot",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "facility_id",
+        "column": "slot_facility_id",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Slot.slot_city",
+      "name": "Slot.slot_city",
+      "description": "City of the slot",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "slot_city",
+        "column": "slot_city",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Slot.slot_specialty",
+      "name": "Slot.slot_specialty",
+      "description": "Specialty of the slot",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "slot_specialty",
+        "column": "slot_specialty",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Slot.start",
+      "name": "Slot.start",
+      "description": "Start time (UTC)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "start",
+        "column": "start",
+        "data_type": "timestamp"
+      }
+    },
+    {
+      "id": "Slot.status",
+      "name": "Slot.status",
+      "description": "open or booked",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "status",
+        "column": "status",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Slot.slot_language",
+      "name": "Slot.slot_language",
+      "description": "Language of the consultation",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "slot_language",
+        "column": "slot_language",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "Slot.clinician_role",
+      "name": "Slot.clinician_role",
+      "description": "consultant or specialist",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.9,
+      "kind": "attribute",
+      "spec": {
+        "entity": "Slot",
+        "path": "clinician_role",
+        "column": "clinician_role",
+        "data_type": "string"
+      }
+    },
+    {
+      "id": "offer_count",
+      "name": "offer_count",
+      "description": "Number of offers",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "llm",
+      "confidence": 0.8,
+      "kind": "metric",
+      "spec": {
+        "grain": "Offer",
+        "aggregation": "count",
+        "expr": {
+          "op": "rows"
+        }
+      }
+    },
+    {
+      "id": "lowest_price_usd",
+      "name": "lowest_price_usd",
+      "description": "Lowest price, USD",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "llm",
+      "confidence": 0.8,
+      "kind": "metric",
+      "spec": {
+        "grain": "Offer",
+        "aggregation": "min",
+        "expr": {
+          "op": "attr",
+          "id": "Offer.price_usd"
+        }
+      }
+    },
+    {
+      "id": "department_count",
+      "name": "department_count",
+      "description": "Number of departments",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "llm",
+      "confidence": 0.8,
+      "kind": "metric",
+      "spec": {
+        "grain": "Department",
+        "aggregation": "count",
+        "expr": {
+          "op": "rows"
+        }
+      }
+    },
+    {
+      "id": "open_slots",
+      "name": "open_slots",
+      "description": "Open appointment slots",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "llm",
+      "confidence": 0.8,
+      "kind": "metric",
+      "spec": {
+        "grain": "Slot",
+        "aggregation": "count",
+        "expr": {
+          "op": "rows"
+        },
+        "filters": [
+          {
+            "attr": "Slot.status",
+            "op": "eq",
+            "value": {
+              "type": "string",
+              "v": "open"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "rel.slot_facility",
+      "name": "rel.slot_facility",
+      "description": "Each slot belongs to one facility (value overlap 1.0)",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "introspect",
+      "confidence": 0.97,
+      "kind": "relation",
+      "spec": {
+        "from": "Slot",
+        "to": "Facility",
+        "cardinality": "many_to_one",
+        "local_path": "facility_id",
+        "local_column": "slot_facility_id",
+        "foreign_path": "_id",
+        "foreign_column": "facility_code",
+        "verified": true,
+        "foreign_indexed": true
+      }
+    },
+    {
+      "id": "glossary.heart_doctor",
+      "name": "glossary.heart_doctor",
+      "description": "'heart doctor' means the cardiology specialty",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "llm",
+      "confidence": 0.7,
+      "kind": "glossary_term",
+      "spec": {
+        "phrase": "heart doctor",
+        "maps_to": "Service.specialty"
+      }
+    },
+    {
+      "id": "glossary.cardiologue",
+      "name": "glossary.cardiologue",
+      "description": "'cardiologue' means the cardiology specialty",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "llm",
+      "confidence": 0.7,
+      "kind": "glossary_term",
+      "spec": {
+        "phrase": "cardiologue",
+        "maps_to": "Service.specialty"
+      }
+    },
+    {
+      "id": "glossary.tabib_qalb",
+      "name": "glossary.tabib_qalb",
+      "description": "'طبيب قلب' means the cardiology specialty",
+      "synonyms": [],
+      "status": "proposed",
+      "provenance": "llm",
+      "confidence": 0.7,
+      "kind": "glossary_term",
+      "spec": {
+        "phrase": "طبيب قلب",
+        "maps_to": "Service.specialty"
+      }
+    }
+  ]
+}
