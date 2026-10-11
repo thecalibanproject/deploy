@@ -1,4 +1,4 @@
-# Caliban — single-host on-prem stack (zero egress by default).
+# Caliban: single-host on-prem stack (zero egress by default).
 #
 #   cp .env.example .env            # then fill in the secrets (see comments in the file)
 #   docker compose --profile qwen3-small --profile embeddings --profile reranker up -d   # 1×24 GB GPU
