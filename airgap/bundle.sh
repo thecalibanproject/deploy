@@ -8,7 +8,7 @@
 #                    [--key FILE] [--skip-models] [--allow-licence ID]...
 #
 #   --profile P   all (default) | none | comma-separated compose profiles: qwen3-small,
-#                 qwen3-large, qwen3-moe, gpt-oss, embeddings, reranker, cpu, ollama, k8s.
+#                 qwen3-large, qwen3-moe, gpt-oss, embeddings, reranker, cpu, gpu-12gb, ollama, k8s.
 #                 Legacy aliases: gpu = qwen3-small,gpt-oss,embeddings,reranker.
 #   --model ID    select this models.lock entry even if it has bundle: false (repeatable).
 #                 Without an explicit --profile, ONLY the listed models are selected.
@@ -75,7 +75,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-KNOWN_PROFILES=" qwen3-small qwen3-large qwen3-moe gpt-oss embeddings reranker cpu ollama k8s "
+KNOWN_PROFILES=" qwen3-small qwen3-large qwen3-moe gpt-oss embeddings reranker cpu gpu-12gb ollama k8s "
 case "$PROFILE" in
   all|none) ;;
   gpu) PROFILE="qwen3-small,gpt-oss,embeddings,reranker" ;;

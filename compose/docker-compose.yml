@@ -3,6 +3,7 @@
 #   cp .env.example .env            # then fill in the secrets (see comments in the file)
 #   docker compose --profile qwen3-small --profile embeddings --profile reranker up -d   # 1×24 GB GPU
 #   docker compose --profile qwen3-large --profile embeddings --profile reranker up -d   # 1×48/80 GB GPU
+#   docker compose --profile gpu-12gb up -d  # 1×12 GB GPU: llama.cpp CUDA, chat + embed + rerank
 #   docker compose --profile cpu up -d       # no GPU: llama.cpp + TEI (CPU)
 #   docker compose --profile ollama up -d    # one Ollama endpoint, many models
 #   docker compose up -d                     # no local model (BYOK only; needs the egress override)
@@ -262,9 +263,11 @@ services:
   # hardware tier (README "Running open models"), e.g.
   #   1×24 GB:  --profile qwen3-small --profile embeddings --profile reranker
   #   1×48 GB:  --profile qwen3-large --profile embeddings --profile reranker
+  #   1×12 GB:  --profile gpu-12gb       (chat, embed and rerank in one profile)
   #   CPU only: --profile cpu
   #   anything: --profile ollama           (one endpoint, many models)
-  # Do not combine `embeddings` with `cpu`: both serve the `embed` name.
+  # Do not combine `embeddings` with `cpu`: both serve the `embed` name. `gpu-12gb` serves `embed`
+  # and `rerank` too, so it goes alone.
   #
   # Weights are never downloaded at runtime: everything is read from $MODELS_DIR (layout and
   # download commands in airgap/models.lock.yaml / `airgap/bundle.sh fetch`), HF_HUB_OFFLINE=1,
@@ -524,6 +527,169 @@ services:
       - --hostname=0.0.0.0
       - --port=8000
       - --auto-truncate
+
+  # ───────────── gpu-12gb: chat + embed + rerank on one 12 GB GPU (llama.cpp CUDA) ─────────────
+  # For a single 12 GB consumer card (RTX 3060 12 GB, 4070, 5070): every model in 4- or 8-bit GGUF
+  # on llama.cpp, the one engine of docs research note 09 (section 5) that serves chat, embeddings
+  # and reranking from small quantised weights. vLLM does not fit here: no official 4-bit
+  # Qwen3.5-9B, and one vLLM process per model costs about 1.5 GB of CUDA graphs and activations
+  # each (note 09, section 4.3). All Apache-2.0, 7.1 GB of weights in total:
+  #   chat    Qwen3.5-9B Q4_K_M (unsloth/Qwen3.5-9B-GGUF, 5.7 GB): note 09's 1x24 GB chat model,
+  #           in the 4-bit GGUF note 09 lists. Hybrid attention: 32 KiB of KV per token (BF16),
+  #           16 KiB with the q8_0 cache below, so 32k context costs 0.5 GiB.
+  #   embed   Qwen3-Embedding-0.6B Q8_0 (Qwen/Qwen3-Embedding-0.6B-GGUF, 0.64 GB): same model and
+  #           1024-d vectors as the embeddings profile, served under the `embed` name.
+  #   rerank  Qwen3-Reranker-0.6B Q8_0 (ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF, 0.64 GB): same
+  #           model as the reranker profile, served under the `rerank` name (llama.cpp
+  #           --reranking, POST /v1/rerank).
+  # So local/qwen3-embedding-0.6b and local/qwen3-reranker-0.6b in config/caliban.toml work
+  # unchanged, and the chat model is local/qwen3.5-9b-q4. VRAM budget: README "1 x 12 GB".
+  # KV cache stays in GPU memory, never shared or offloaded. llama.cpp has no tenant cache_salt
+  # (note 09, section 5), so its prompt cache is off by default (--no-cache-prompt) and its host
+  # RAM prompt cache tier is always off (--cache-ram=0): shared or offloaded KV tiers that key on
+  # tokens alone leak prompts across tenants by timing (arXiv 2609.38706). Only a pool that serves
+  # one trust group may set GPU12_CHAT_CACHE_PROMPT=--cache-prompt (per-slot, in GPU memory).
+  # --port is always explicit: llama.cpp builds from b11521 listen on 9931 by default.
+  # Do not combine with the embeddings, reranker or cpu profiles: they serve the same names.
+  qwen3-gpu12:
+    <<: *hardening
+    profiles: [gpu-12gb]
+    image: ${LLAMACPP_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11347}
+    command:
+      - --model=/models/${GPU12_CHAT_GGUF:-qwen3.5-9b-gguf/Qwen3.5-9B-Q4_K_M.gguf}
+      - --alias=${GPU12_CHAT_ALIAS:-unsloth/Qwen3.5-9B-GGUF}
+      - --host=0.0.0.0
+      - --port=8000
+      - --n-gpu-layers=999
+      - --ctx-size=${GPU12_CHAT_CTX:-32768}
+      - --parallel=${GPU12_CHAT_PARALLEL:-2}
+      # One KV pool shared by the slots, so a single request can use the whole --ctx-size
+      # (context_window in config/caliban.toml) instead of ctx-size / parallel.
+      - --kv-unified
+      - --flash-attn=on
+      - --cache-type-k=${GPU12_CHAT_KV_TYPE:-q8_0}
+      - --cache-type-v=${GPU12_CHAT_KV_TYPE:-q8_0}
+      - ${GPU12_CHAT_CACHE_PROMPT:---no-cache-prompt}
+      - --cache-ram=0
+      - --jinja
+      - --no-webui
+      - --offline
+    environment:
+      <<: *llm-offline-env
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+    networks: [backend]
+    # Loads last, after the embedder and the reranker hold their memory (as x-after-small-models).
+    depends_on:
+      embed-gpu12:
+        condition: service_healthy
+      rerank-gpu12:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU12_GPU:-0}"]
+              capabilities: [gpu]
+
+  embed-gpu12:
+    <<: *hardening
+    profiles: [gpu-12gb]
+    image: ${LLAMACPP_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11347}
+    command:
+      - --model=/models/qwen3-embedding-0.6b-gguf/Qwen3-Embedding-0.6B-Q8_0.gguf
+      - --alias=Qwen/Qwen3-Embedding-0.6B
+      - --host=0.0.0.0
+      - --port=8000
+      - --embedding
+      - --pooling=last
+      - --n-gpu-layers=999
+      # One input must fit in a micro-batch: longer inputs are refused, not truncated as on TEI.
+      - --ctx-size=${GPU12_EMBED_CTX:-4096}
+      - --batch-size=${GPU12_EMBED_CTX:-4096}
+      - --ubatch-size=${GPU12_EMBED_CTX:-4096}
+      - --parallel=1
+      - --flash-attn=on
+      - --cache-ram=0
+      - --no-webui
+      - --offline
+    environment:
+      <<: *llm-offline-env
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+    networks:
+      backend:
+        aliases: [embed]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU12_GPU:-0}"]
+              capabilities: [gpu]
+
+  rerank-gpu12:
+    <<: *hardening
+    profiles: [gpu-12gb]
+    image: ${LLAMACPP_CUDA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b11347}
+    command:
+      - --model=/models/qwen3-reranker-0.6b-gguf/qwen3-reranker-0.6b-q8_0.gguf
+      - --alias=Qwen/Qwen3-Reranker-0.6B
+      - --host=0.0.0.0
+      - --port=8000
+      - --reranking
+      - --n-gpu-layers=999
+      # A query plus one document must fit in a micro-batch.
+      - --ctx-size=${GPU12_RERANK_CTX:-4096}
+      - --batch-size=${GPU12_RERANK_CTX:-4096}
+      - --ubatch-size=${GPU12_RERANK_CTX:-4096}
+      - --parallel=1
+      - --flash-attn=on
+      - --cache-ram=0
+      - --no-webui
+      - --offline
+    environment:
+      <<: *llm-offline-env
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ${MODELS_DIR:-./models}:/models:ro
+    networks:
+      backend:
+        aliases: [rerank]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU12_GPU:-0}"]
+              capabilities: [gpu]
 
   # ───────────── ollama: one endpoint, many models ─────────────
   # Pull on a CONNECTED machine (`ollama pull qwen3.6:35b qwen3-embedding:0.6b`) and copy its

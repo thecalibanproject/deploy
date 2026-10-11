@@ -25,7 +25,7 @@ services:
       - egress
     environment:
       HTTPS_PROXY: ${CALIBAN_HTTPS_PROXY:-}
-      NO_PROXY: ${CALIBAN_NO_PROXY:-qwen3-small,qwen3-large,qwen3-moe,gpt-oss,qwen3-cpu,embed,rerank,rerank-bge,ollama,postgres,qdrant,valkey,localhost,127.0.0.1}
+      NO_PROXY: ${CALIBAN_NO_PROXY:-qwen3-small,qwen3-large,qwen3-moe,gpt-oss,qwen3-cpu,qwen3-gpu12,embed,embed-gpu12,rerank,rerank-gpu12,rerank-bge,ollama,postgres,qdrant,valkey,localhost,127.0.0.1}
 
 networks:
   egress:

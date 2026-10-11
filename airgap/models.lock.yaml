@@ -282,23 +282,63 @@ models:
     size: 65GB
     sha256: ""
 
-  # ══════════════ Optional: alternative CPU / single-endpoint models ══════════════
+  # ══════════════ 1×12 GB GPU tier (compose profile gpu-12gb, llama.cpp CUDA) ══════════════
+  # 7.1 GB in total with the PII model. Same chat model as the 24 GB tier and the same embedder
+  # and reranker as the GPU profiles, as GGUFs (docs research note 09, sections 1, 4.1 and 5).
+  # Revisions checked on 2026-10-11 (licence apache-2.0 at each). sha256 is pinned from the
+  # Hugging Face LFS hash of the one file each entry fetches, so `fetch` verifies it.
+  # Provenance: the chat GGUF is a community conversion (unsloth) and the reranker GGUF a
+  # conversion by the llama.cpp maintainers (ggml-org); only the embedder GGUF is Qwen's own.
+  # Sites that accept first-party artifacts only: convert Qwen/Qwen3.5-9B and
+  # Qwen/Qwen3-Reranker-0.6B with convert_hf_to_gguf.py (and llama-quantize) at llama.cpp b11346,
+  # sign the result, and pin its hash here.
 
-  # Smaller CPU chat (dense 9B, 5.7 GB). Use with
+  # Chat (dense 9B, hybrid attention, 5.7 GB). Also the smaller CPU chat: fetch it with
+  # --model unsloth/Qwen3.5-9B-GGUF and use
   #   QWEN3_CPU_GGUF=qwen3.5-9b-gguf/Qwen3.5-9B-Q4_K_M.gguf  QWEN3_CPU_ALIAS=unsloth/Qwen3.5-9B-GGUF
-  # and a matching [[models]] entry (upstream_model = the alias).
+  # with a matching [[models]] entry (upstream_model = the alias).
   - id: unsloth/Qwen3.5-9B-GGUF
     source: hf://unsloth/Qwen3.5-9B-GGUF
-    revision: "TODO-pin-commit"   # main@2026-10-02: 3885219b6810b007914f3a7950a8d1b469d598a5
+    revision: "3885219b6810b007914f3a7950a8d1b469d598a5"
     include: "Qwen3.5-9B-Q4_K_M.gguf"
     licence: apache-2.0
     dir: qwen3.5-9b-gguf
     format: gguf-q4_k_m
     engine: llama.cpp
-    profiles: cpu
-    bundle: false
+    profiles: gpu-12gb
+    bundle: true
     size: 5.7GB
-    sha256: ""
+    sha256: "22a604eaf7293e3db6d3bc8ffd2cf00e588d06e15e792fa0b74189773f4d63d5"   # one file, sha256 03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8
+
+  # Embeddings, Qwen's own GGUF (1024-d, like the safetensors served by TEI).
+  - id: Qwen/Qwen3-Embedding-0.6B-GGUF
+    source: hf://Qwen/Qwen3-Embedding-0.6B-GGUF
+    revision: "370f27d7550e0def9b39c1f16d3fbaa13aa67728"
+    include: "Qwen3-Embedding-0.6B-Q8_0.gguf"
+    licence: apache-2.0
+    dir: qwen3-embedding-0.6b-gguf
+    format: gguf-q8_0
+    engine: llama.cpp
+    profiles: gpu-12gb
+    bundle: true
+    size: 639MB
+    sha256: "f6a9ca9ef8a404c905af27d617a571ce47d7b12884d674112894acde39cf5d56"   # one file, sha256 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439
+
+  # Reranker, converted by the llama.cpp maintainers (ggml-org) for llama-server --reranking.
+  - id: ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF
+    source: hf://ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF
+    revision: "a02f48bb4f057028298c21fa033da2b30d7742d5"
+    include: "qwen3-reranker-0.6b-q8_0.gguf"
+    licence: apache-2.0
+    dir: qwen3-reranker-0.6b-gguf
+    format: gguf-q8_0
+    engine: llama.cpp
+    profiles: gpu-12gb
+    bundle: true
+    size: 639MB
+    sha256: "23bc8804fc60c5387415d965b68d0b924f887d4c1108ac7339a92d858832a7bd"   # one file, sha256 22c9979ce4fbcdc5acdc310c6641c32797eff1aa980b8f7a2db8a8ea23429a48
+
+  # ══════════════ Optional: alternative CPU / single-endpoint models ══════════════
 
   - id: ggml-org/gpt-oss-20b-GGUF
     source: hf://ggml-org/gpt-oss-20b-GGUF

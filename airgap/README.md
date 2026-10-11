@@ -92,6 +92,7 @@ M=deploy/compose/models          # or any directory; pass it as --models-dir
 # 2. Fetch the default bundle for the profiles you will run:
 deploy/airgap/bundle.sh fetch --profile qwen3-small,embeddings,reranker,gpt-oss --models-dir "$M" --pin
 deploy/airgap/bundle.sh fetch --profile cpu --models-dir "$M" --pin            # CPU-only sites
+deploy/airgap/bundle.sh fetch --profile gpu-12gb --models-dir "$M" --pin       # 1×12 GB GPU sites
 # Optional tiers (bundle: false) are selected one by one:
 deploy/airgap/bundle.sh fetch --model Qwen/Qwen3.8-27B-FP8 --models-dir "$M" --pin
 ```
@@ -150,7 +151,7 @@ deploy/airgap/bundle.sh --version 0.1.0 --profile qwen3-small,embeddings,reranke
 `--profile` options (the same names as the compose profiles):
 - `all` (the default): every image, and every `bundle: true` model.
 - A comma-separated list: `qwen3-small`, `qwen3-large`, `qwen3-moe`, `gpt-oss`, `embeddings`,
-  `reranker`, `cpu`, `ollama`, `k8s`. Only the images and `bundle: true` models those profiles
+  `reranker`, `cpu`, `gpu-12gb`, `ollama`, `k8s`. Only the images and `bundle: true` models those profiles
   use are included. `gpu` is kept as an alias for `qwen3-small,gpt-oss,embeddings,reranker`.
 - `none`: Caliban and datastores only, for sites that already run their own model servers.
 - `--model <id>` (repeatable): adds that `models.lock.yaml` entry even if it has
