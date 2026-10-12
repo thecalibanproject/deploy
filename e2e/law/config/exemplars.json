@@ -1,0 +1,34 @@
+{
+  "_comment": "Exemplars of the law firm tenant's caliban/auto intent `legal` (French and English), set through PUT /api/v1/tenants/{t}/intents/legal. The tenant's node_routes maps it to node/legal-assistant@published. Synthetic utterances without names or identifiers.",
+  "intents": {
+    "legal": [
+      "Quels sont les délais à venir sur ce dossier ?",
+      "Quand est la prochaine audience dans l'affaire du client ?",
+      "Où en est le dossier de succession ?",
+      "Combien d'heures avons-nous passé sur ce dossier et que reste-t-il à facturer ?",
+      "Fais un contrôle de conflits avant d'ouvrir un nouveau dossier",
+      "Avons-nous un conflit d'intérêts si nous acceptons ce nouveau client ?",
+      "Que dit le Code civil sur la formation du contrat ?",
+      "Quelles sont les conditions de validité d'une clause de non-concurrence ?",
+      "Résume ce courriel du client et dis-moi quels délais s'appliquent",
+      "Quel avocat suit ce dossier et devant quelle juridiction ?",
+      "What are the upcoming deadlines on this matter?",
+      "When is the next hearing for our client?",
+      "What is the status of the arbitration file?",
+      "How many hours have we billed on this matter and what is still unbilled?",
+      "Run a conflict check on a prospective client",
+      "Do we have a conflict of interest if we act against this company?",
+      "Under Lebanese law, how is a contract formed?",
+      "What does the firm memo say about non-compete clauses?",
+      "Summarise this client email and tell me which deadlines apply",
+      "Which matters is the Paris office handling for this client?",
+      "Quelles sont les prochaines échéances du dossier ?",
+      "Quels délais restent à respecter dans le dossier de ce client ?",
+      "Donne-moi les dates d'audience et de dépôt du dossier",
+      "Here is a forwarded message from a client: which deadlines apply to his matter?",
+      "A client wrote to us about his file: summarise the e-mail and list the deadlines",
+      "Forwarded e-mail from a client asking when he will receive our written opinion",
+      "Voici le courriel d'un client : résume-le et dis-moi ce qu'il faut faire dans son dossier"
+    ]
+  }
+}
