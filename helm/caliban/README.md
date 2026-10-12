@@ -50,7 +50,7 @@ helm install caliban ./caliban -n caliban -f caliban/values-airgap.yaml   # air-
 | `providerKeys.existingSecret` | `""` | Every key becomes an env var, for `api_key = { env = "..." }` refs. Mounted on routers too, since refs resolve where the request is served. |
 | `extraEnv` | `[]` | Added to every Caliban pod. `router.extraEnv`, `controlPlane.extraEnv`, `worker.extraEnv` and `standalone.extraEnv` add env to one component only. |
 | `tcpNodelay` | `true` | Sets `CALIBAN_TCP_NODELAY` (`1`/`0`) on every Caliban pod. Keep it on: on Linux, Nagle plus delayed ACK added 24 to 50 ms to the first streamed token (core `bench/RESULTS-aws-2026-10.md`). |
-| `qdrant.url` / `valkey.url` / `valkey.existingSecret` | in-namespace defaults | Valkey holds the quotas shared by all routers (`config.limits.store: valkey`) |
+| `qdrant.url` / `valkey.url` / `valkey.existingSecret` | in-namespace defaults | Valkey holds the quotas shared by all routers (`config.limits.store: valkey`); Qdrant holds the semantic cache and the retrieval index (`config.rag`, Qdrant 1.19.2 or later) |
 | `valkey.passwordSecret` / `valkey.passwordKey` | `""` / `password` | Optional: Valkey password from its own Secret (`CALIBAN_VALKEY_PASSWORD`), when the URL has none |
 | `config` | see `values.yaml` | Rendered verbatim to `caliban.toml`, with the same schema as `core/config/caliban.example.toml`. |
 | `router.autoscaling.enabled` | `false` | Turns on the HPA (CPU, optionally memory). Replicas are then left to the HPA. |

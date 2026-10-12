@@ -26,6 +26,15 @@ jobs:
       - run: helm template caliban helm/caliban > /dev/null
       - run: helm template caliban helm/caliban --set router.mode=static > /dev/null
       - run: helm template caliban helm/caliban -f helm/caliban/values-airgap.yaml > /dev/null
+      - name: Retrieval settings ([rag], core's defaults) in the chart and the compose config
+        run: |
+          for extra in "" "-f helm/caliban/values-airgap.yaml"; do
+            out=$(helm template caliban helm/caliban $extra --show-only templates/configmap.yaml)
+            for want in '[rag]' 'index = "qdrant"' 'collection_prefix = "caliban_rag"' 'index_concurrency = 2'; do
+              grep -qF -- "$want" <<<"$out" || { echo "::error::missing '$want' in the chart config ($extra)"; exit 1; }
+            done
+          done
+          grep -qxF '[rag]' compose/config/caliban.toml || { echo "::error::compose/config/caliban.toml has no [rag]"; exit 1; }
       - name: Single sign-on renders into caliban.toml, the env and the NetworkPolicy
         run: |
           cat > /tmp/sso.yaml <<'EOF'

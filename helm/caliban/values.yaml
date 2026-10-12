@@ -303,6 +303,15 @@ config:
   # quota.state = degraded. Limits: core/config/caliban.example.toml.
   limits:
     store: valkey
+  # Retrieval for the built-in rag_search node tool (core docs/rag.md): workers and standalone
+  # processes index documents into Qdrant (CALIBAN_QDRANT_URL from `qdrant.url`; Qdrant 1.19.2 or
+  # later, since every search is filtered), one Qdrant collection per document collection. Core's
+  # defaults; workers in split mode get the same values with the config snapshot. Node workers
+  # with their own database role need the retrieval grants (chart README, "Node workers").
+  rag:
+    index: qdrant                    # or memory: one standalone process, lost on restart
+    collection_prefix: caliban_rag
+    index_concurrency: 2             # documents one process indexes at once
   # caliban/auto intent routing. Without `routing`, keyword rules pick the intent. To add the
   # embedding kNN stage (needs the embedding pool), uncomment the block. Values calibrated for
   # Qwen3-Embedding-0.6B (kNN top-1 0.948 against 0.838 without the instruction; core

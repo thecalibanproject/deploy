@@ -92,6 +92,17 @@ default_mode = "reversible"
 [limits]
 store = "valkey"
 
+# Retrieval for the built-in rag_search node tool (core docs/rag.md). Collections and documents are
+# managed on the admin API; the standalone process (and node workers) index them into Qdrant, one
+# Qdrant collection per document collection. Core's defaults. qdrant_url is left unset so that
+# CALIBAN_QDRANT_URL (docker-compose.yml) applies. Needs Qdrant 1.19.2 or later (every search is
+# filtered) and a Caliban image with retrieval: an older image refuses the unknown [rag] table.
+[rag]
+index = "qdrant"                  # or "memory": one standalone process, lost on restart
+# qdrant_url = "http://qdrant:6333" # unset: CALIBAN_QDRANT_URL, then [cache.semantic] qdrant_url
+collection_prefix = "caliban_rag"
+index_concurrency = 2             # documents one process indexes at once
+
 # caliban/auto intent routing. Without [routing], keyword rules pick the intent. To add the
 # embedding kNN stage, start the embeddings profile (GPU) and uncomment the table. The values are
 # calibrated for Qwen3-Embedding-0.6B (kNN top-1 0.948 against 0.838 without the instruction; core
