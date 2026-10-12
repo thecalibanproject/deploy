@@ -416,7 +416,10 @@ jobs:
             check '.services["caliban-e2e-model"].ports == null' 'the e2e model publishes no port'
             check '.services["caliban-e2e-mongo"].image | test("^mongo:8\\.0\\.[0-9]+$")' 'MongoDB image pinned'
           done
-          python3 -m py_compile "$E2E_DIR"/lib/*.py "$E2E_DIR"/mock/model.py
+          python3 -m py_compile "$E2E_DIR"/lib/*.py "$E2E_DIR"/mock/model.py "$E2E_DIR"/check.py \
+            "$E2E_DIR"/demo/scenario.py e2e/demo/*.py
+          node --check e2e/demo/overlay.js
+          python3 -m unittest discover -s e2e/demo -p 'test_*.py'
           python3 -c 'import json, sys; [json.load(open(f, encoding="utf-8")) for f in sys.argv[1:]]' \
             "$E2E_DIR"/config/*.json "$E2E_DIR"/node/*.json "$E2E_DIR"/ontology/*.json "$E2E_DIR"/rag/*.json
           # RAG stage: every document the manifest names exists, and none carries an invisible or
@@ -445,6 +448,6 @@ jobs:
         run: >-
           docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.11.0
           -x images/build.sh airgap/bundle.sh airgap/load.sh scripts/smoke.sh scripts/smoke-gpu12.sh
-          e2e/health-triage/e2e.sh
+          e2e/health-triage/e2e.sh e2e/demo/run-demo.sh e2e/demo/record-term.sh e2e/demo/infra.sh
       # Lints the Dockerfile only; no layers are built, so the core/web siblings are not needed.
       - run: docker buildx build --check -f images/caliban.Dockerfile ..
