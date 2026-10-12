@@ -18,6 +18,8 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
+from telemetry import classify_text as classify
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.environ.get("E2E_WORK_DIR") or os.path.join(os.path.dirname(HERE), ".work")
 OUT = os.environ.get("DEMO_OUT") or os.path.join(WORK, "demo")
@@ -191,7 +193,7 @@ def telemetry_body():
             for r in rows:
                 steps = ", ".join(f"{s.get('vertex')} {ms(s.get('duration_ms'))}" for s in r.get("steps") or []) or "-"
                 parts.append(f"<tr><td><b>{esc(r.get('label'))}</b></td><td><code>{esc(r.get('intent') or '-')}</code></td>"
-                             f"<td>{esc(r.get('route_stage') or '-')}</td><td>{ms(r.get('classify_ms'))}</td>"
+                             f"<td>{esc(r.get('route_stage') or '-')}</td><td>{esc(classify(r))}</td>"
                              f"<td>{ms(r.get('pii_ms'))}</td><td>{esc(r.get('cache') or '-')}</td>"
                              f"<td>{ms(r.get('model_ttfb_ms'))} / {ms(r.get('model_total_ms'))}</td>"
                              f"<td>{esc(steps)}</td><td>{ms(r.get('end_to_end_ms'))}</td></tr>")

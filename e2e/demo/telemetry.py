@@ -84,13 +84,13 @@ def rows(records):
         run = runs.get(r.get("run_id")) or {}
         steps = run.get("steps") or r.get("steps") or []
         route = st.get("route") or {}
-        classify = None
-        if _dur(st, "route") is not None or _dur(st, "embed") is not None:
-            classify = round((_dur(st, "route") or 0) + (_dur(st, "embed") or 0), 1)
+        # `route` is the whole classification; `embed` (the routing embedder call) is inside it.
+        classify = _dur(st, "route")
         out.append({
             "scenario": r.get("scenario"), "label": r.get("label"), "path": r.get("path"), "status": r.get("status"),
             "intent": (r.get("intent") or "").split(";")[0] or None, "route": r.get("route"),
-            "route_stage": route.get("desc"), "classify_ms": classify, "pii_ms": _dur(st, "pii"),
+            "route_stage": route.get("desc"), "classify_ms": classify, "embed_ms": _dur(st, "embed"),
+            "pii_ms": _dur(st, "pii"),
             "cache": (st.get("cache") or {}).get("desc") or r.get("cache"), "cache_ms": _dur(st, "cache"),
             "model_ttfb_ms": _dur(st, "upstream"), "model_total_ms": _dur(st, "upstream_total"),
             "node_ms": _dur(st, "node") if _dur(st, "node") is not None else run.get("duration_ms"),
@@ -101,6 +101,13 @@ def rows(records):
             "server_timing": bool(st),
         })
     return out
+
+
+def classify_text(r):
+    """Classification ms, with the embedding share when the router embedded the request."""
+    if r.get("classify_ms") is None:
+        return "-"
+    return ms(r["classify_ms"]) + (f" (embed {ms(r['embed_ms'])})" if r.get("embed_ms") is not None else "")
 
 
 def evals(records):
@@ -115,7 +122,7 @@ def pct(values, p):
     return round(v[k], 1)
 
 
-METRICS = [("classify_ms", "classification"), ("pii_ms", "PII"), ("cache_ms", "cache"),
+METRICS = [("classify_ms", "classification"), ("embed_ms", "of which embedding"), ("pii_ms", "PII"), ("cache_ms", "cache"),
            ("model_ttfb_ms", "model TTFB"), ("model_total_ms", "model total"), ("node_ms", "node run"),
            ("server_total_ms", "gateway total"), ("end_to_end_ms", "end to end (client)")]
 
@@ -153,7 +160,7 @@ def markdown(scenarios):
                   "Model total ms | Node steps (ms) | End to end ms |", "|---|---|---|---|---|---|---|---|---|---|"]
         for r in rs:
             steps = ", ".join(f"{s['vertex']} {ms(s['duration_ms'])}" for s in r["steps"]) or "-"
-            lines.append(f"| {r['label']} | {r['intent'] or '-'} | {r['route_stage'] or '-'} | {ms(r['classify_ms'])} | "
+            lines.append(f"| {r['label']} | {r['intent'] or '-'} | {r['route_stage'] or '-'} | {classify_text(r)} | "
                          f"{ms(r['pii_ms'])} | {r['cache'] or '-'} | {ms(r['model_ttfb_ms'])} | "
                          f"{ms(r['model_total_ms'])} | {steps} | {ms(r['end_to_end_ms'])} |")
         lines += ["", "| Stage | n | p50 ms | p95 ms |", "|---|---|---|---|"]
@@ -174,7 +181,8 @@ def report(scenarios):
     text, allrows = markdown(scenarios)
     with open(os.path.join(OUT, "telemetry.md"), "w", encoding="utf-8") as f:
         f.write(text)
-    cols = ["scenario", "label", "path", "status", "intent", "route", "route_stage", "classify_ms", "pii_ms", "cache",
+    cols = ["scenario", "label", "path", "status", "intent", "route", "route_stage", "classify_ms", "embed_ms", "pii_ms",
+            "cache",
             "cache_ms", "model_ttfb_ms", "model_total_ms", "node_ms", "server_total_ms", "client_headers_ms",
             "client_ttfb_ms", "end_to_end_ms", "steps"]
     with open(os.path.join(OUT, "telemetry.csv"), "w", encoding="utf-8", newline="") as f:

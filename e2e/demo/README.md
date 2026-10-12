@@ -20,6 +20,7 @@ e2e/demo/
 ├── cards.py         title and section cards, the health results segment
 ├── stitch.py        per-scenario MP4s and the full MP4 with chapters
 ├── telemetry.py     Server-Timing parsing, the telemetry records and the combined report
+├── test_telemetry.py  its unit tests (python3 -m unittest discover -s e2e/demo -p 'test_*.py')
 └── images.env       the pinned images
 e2e/<scenario>/
 ├── demo/scenario.py NAME, TITLE, chapters(ctx)
@@ -107,9 +108,11 @@ blurred in every recording (`[data-testid=plaintext-key]`).
 
 `ctx.gateway` times every data-plane call on the client (to the response headers, to the first body
 byte, total) and parses the W3C `Server-Timing` response header when the gateway sends one (core's
-stage metrics: `auth`, `route` with `desc` `knn`, `rules`, `embedding` or `pinned`, `embed`, `pii`,
+stage metrics: `auth`, `route` with `desc` `pinned`, `rules`, `knn` or `keyword`, `embed`, `pii`,
 `cache` with `desc` `hit` or `miss`, `upstream` (time to first byte), `upstream_total`, `node`,
-`total`). Without the header only the client-side times are shown and reported. When a call
+`total`). Classification is `route` alone: `embed`, the routing embedder call, is
+measured inside it and shown as its part ("12.5 (embed 9.1)"). Without the header only the
+client-side times are shown and reported. When a call
 started a node run that has ended (the `caliban-run-id` header, or the `id` of a
 `/v1/nodes/{name}/runs` answer), the run and its steps' `duration_ms` are fetched with the same key.
 
@@ -117,7 +120,9 @@ Each call appends a record to `$DEMO_OUT/<scenario>-telemetry.jsonl` (`kind`: `r
 `eval`). After a scenario's last chapter the framework adds a **Telemetry** chapter: per request the
 intent, the route stage, classification, PII, cache, model TTFB and total, node steps and end to end,
 then p50 and p95 per stage and per node step, and the eval latencies recorded with
-`ctx.record_eval`. `telemetry.py report` writes the combined `telemetry.md`, `telemetry.csv` and
+`ctx.record_eval`. A scenario may append records of its own with `telemetry.append(scenario, record)`
+(`kind: request` with `label`, `server` as `parse_server_timing` returns it, `client` with
+`total_ms`), such as an SDK's classification rows. `telemetry.py report` writes the combined `telemetry.md`, `telemetry.csv` and
 `telemetry.json` across scenarios; `cards.py telemetry` renders them as the full video's closing
 segment.
 
@@ -153,7 +158,7 @@ Outputs in `$E2E_WORK_DIR/demo/` (`e2e/health-triage/.work/demo/` by default):
 
 | File | What |
 |---|---|
-| `<scenario>.webm` | The console recording |
+| `<scenario>.webm` | The console recording, at the viewport's size: 1536x864 CSS pixels at the default `DEMO_SCALE=1.25` (larger text; the MP4s scale it to 1920x1080), 1920x1080 with `DEMO_SCALE=1` |
 | `<scenario>.timeline.json` | Chapters (`key`, `title`, `start`, `end` in seconds of the video), `idle` spans, `marks`, `api_steps`, `failed` |
 | `shots/<scenario>/NN-<chapter>.png` | A screenshot at the end of each chapter |
 | `term/*.mp4`, `term/*.cast` | Terminal segments (`infra-up`, `check-<scenario>`), replayable casts |
