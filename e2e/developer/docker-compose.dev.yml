@@ -1,0 +1,31 @@
+# Developer scenario, local stack only: the scripted model of mock/model.py as a service of the
+# shared e2e stack (the health triage project), so the developer's chat model (dev/chat, registered
+# by seed.py at http://caliban-e2e-dev-model:8000/v1) answers without a GPU. On the testbed the
+# developer's model is the GPU host's Qwen3.8 through the stack's own recorder, and this file is not
+# used.
+#
+#   E2E_EXTRA_COMPOSE=$PWD/e2e/developer/docker-compose.dev.yml e2e/health-triage/e2e.sh up
+#
+# The mock directory is relative to compose/ (compose resolves relative paths against the first
+# file's directory, compose/docker-compose.yml); DEV_MOCK_DIR overrides it.
+
+services:
+  caliban-e2e-dev-model:
+    image: ${E2E_PYTHON_IMAGE:-python:3.11-slim}
+    container_name: caliban-e2e-dev-model
+    user: "${E2E_UID:-1000}:${E2E_GID:-1000}"
+    command: ["python3", "-u", "/dev-mock/model.py"]
+    read_only: true
+    environment:
+      MOCK_PORT: "8000"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ${DEV_MOCK_DIR:-../e2e/developer/mock}:/dev-mock:ro
+    networks: [backend]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
