@@ -19,6 +19,7 @@ e2e/demo/
 ├── cast.py          `script` timing to asciicast v2
 ├── cards.py         title and section cards, the health results segment
 ├── stitch.py        per-scenario MP4s and the full MP4 with chapters
+├── telemetry.py     Server-Timing parsing, the telemetry records and the combined report
 └── images.env       the pinned images
 e2e/<scenario>/
 ├── demo/scenario.py NAME, TITLE, chapters(ctx)
@@ -72,8 +73,10 @@ runner reports it.
 | `ctx.api_caption(title, line, what, stage=None)` | For a step the console has no page for: the caption plus the note "Admin API, no console page for this yet: <what>"; the step is listed in the timeline's `api_steps` (the report of console gaps) |
 | `ctx.pause(seconds)` | Pacing for the viewer only (scaled by `DEMO_PACE`), never for correctness |
 | `ctx.api` | Admin API client: `get/post/put/patch/delete(path, json=None, tenant_key=None)` returns the parsed JSON (None for an empty body) and raises `framework.ApiError` (`.status`, `.body`) on a non-2xx answer. Uses `CALIBAN_ADMIN_TOKEN`; `tenant_key` sends that bearer instead. `path` starts with `/api/v1/` |
-| `ctx.gateway(path, json, api_key, headers=None)` | Data-plane call: POST with `json`, GET when `json` is None. Returns `(status, headers, body)`, headers lower-cased, body parsed when JSON. Never raises on a status |
-| `ctx.client_panel(title, request_json, status, headers, body)` | Full-screen "customer app" overlay on the same page (one continuous video): the request, the status, the `x-caliban-*` and `caliban-*` headers, the answer (`choices[0].message.content`, or `body` itself). `status=None` shows the request as pending. Stays until `ctx.hide_panel()`, `ctx.goto()` or the next panel. The API key is never shown |
+| `ctx.gateway(path, json, api_key, headers=None, label=None)` | Data-plane call: POST with `json`, GET when `json` is None. Returns `(status, headers, body)`, headers lower-cased, body parsed when JSON. Never raises on a status. Always records telemetry (below); `label` names the request in it (default: the chapter key) |
+| `ctx.client_panel(title, request_json, status, headers, body)` | Full-screen "customer app" overlay on the same page (one continuous video): the request, the status, the `x-caliban-*` and `caliban-*` headers, the answer (`choices[0].message.content`, or `body` itself), and the timing bar of the last `ctx.gateway` call (`timing=` overrides it) with the node steps' durations when it started a node run. `status=None` shows the request as pending. Stays until `ctx.hide_panel()`, `ctx.goto()` or the next panel. The API key is never shown |
+| `ctx.run_timing(run_id, api_key, label=None, end_to_end_ms=None)` | Records a node run's step durations once it has ended, for runs that ended after the call that started them (a human step, a sync wait that ran out). Returns the run |
+| `ctx.record_eval(label, eval)` | Records an eval's latency percentiles (`summary.latency_ms` p50 and p95) in the telemetry report |
 | `ctx.hide_panel()` | Hides the client panel or terminal card |
 | `ctx.terminal(title, lines)` | A terminal-looking card, typed out: lines starting with `$ ` are typed as commands, the others printed as output. Returns when the typing ends; stays until `ctx.hide_panel()` |
 | `ctx.goto(route)` | Console hash route, such as `/tenants/acme?tab=intents`; waits for the shell |
@@ -99,6 +102,24 @@ are `role=dialog` named by their title, tables are named (`get_by_role("table", 
 and forms have `aria-label`s (`get_by_role("form", name="Register datasource")`). Read the console's
 README for the pages and labels; the health scenario uses most of them. A newly minted API key is
 blurred in every recording (`[data-testid=plaintext-key]`).
+
+### Telemetry
+
+`ctx.gateway` times every data-plane call on the client (to the response headers, to the first body
+byte, total) and parses the W3C `Server-Timing` response header when the gateway sends one (core's
+stage metrics: `auth`, `route` with `desc` `knn`, `rules`, `embedding` or `pinned`, `embed`, `pii`,
+`cache` with `desc` `hit` or `miss`, `upstream` (time to first byte), `upstream_total`, `node`,
+`total`). Without the header only the client-side times are shown and reported. When a call
+started a node run that has ended (the `caliban-run-id` header, or the `id` of a
+`/v1/nodes/{name}/runs` answer), the run and its steps' `duration_ms` are fetched with the same key.
+
+Each call appends a record to `$DEMO_OUT/<scenario>-telemetry.jsonl` (`kind`: `request`, `run` or
+`eval`). After a scenario's last chapter the framework adds a **Telemetry** chapter: per request the
+intent, the route stage, classification, PII, cache, model TTFB and total, node steps and end to end,
+then p50 and p95 per stage and per node step, and the eval latencies recorded with
+`ctx.record_eval`. `telemetry.py report` writes the combined `telemetry.md`, `telemetry.csv` and
+`telemetry.json` across scenarios; `cards.py telemetry` renders them as the full video's closing
+segment.
 
 ### Rules for scenarios
 
@@ -137,7 +158,9 @@ Outputs in `$E2E_WORK_DIR/demo/` (`e2e/health-triage/.work/demo/` by default):
 | `shots/<scenario>/NN-<chapter>.png` | A screenshot at the end of each chapter |
 | `term/*.mp4`, `term/*.cast` | Terminal segments (`infra-up`, `check-<scenario>`), replayable casts |
 | `<scenario>.mp4` | Per scenario: its title card, its console walkthrough, its checks |
-| `caliban-demo.mp4` | Everything: title, the gateway host, every scenario, end card; chapter markers per part and per chapter |
+| `<scenario>-telemetry.jsonl` | Every data-plane call's timings, node runs' step durations, eval latencies |
+| `telemetry.md`, `telemetry.csv`, `telemetry.json` | The combined telemetry report |
+| `caliban-demo.mp4` | Everything: title, the gateway host, every scenario, the telemetry segment, end card; chapter markers per part and per chapter |
 
 ## Testing without Docker
 
