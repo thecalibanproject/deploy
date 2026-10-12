@@ -30,8 +30,9 @@ e2e/health-triage/
 
 ## Run it locally
 
-Needs Docker with compose, Python 3.9 or later, and a Caliban image (`images/build.sh`, or any
-image tagged for `CALIBAN_IMAGE`/`CALIBAN_VERSION`). No GPU and no model download: the e2e model
+Needs Docker with compose, Python 3.9 or later, and a Caliban image built from core `ae553e6` or
+later (`images/build.sh`, or any image tagged for `CALIBAN_IMAGE`/`CALIBAN_VERSION`): setup uses
+the admin API that core added there ("Gaps in core" below). No GPU and no model download: the e2e model
 is a scripted, deterministic stand-in.
 
 ```sh
@@ -237,68 +238,48 @@ reports them as known gaps (with `E2E_EXPECT_NER=1`, as failures).
 
 ## Gaps in core found by this test
 
-Core at `00945db`. The first two are worked around here; the rest are reported by the run or
-were seen while building it.
+The thirteen gaps this test found in core `00945db` are fixed in core `ae553e6`; the e2e now uses
+each fix and checks it (the run's checks named below). What is still open follows.
 
-1. **No public API writes ontology proposals.** `POST /api/v1/datasources/{id}/introspect`
-   answers `202` with a job id but only sets the datasource to `introspecting`, for good
-   (`crates/caliban-cp/src/lib.rs`, `introspect_datasource`, a TODO); `Mutation::ProposeOntology`
-   has no route. `setup.py` writes the proposals with `psql` in the store's shape (one
-   `ontology_commit`), restarts Caliban so the store reloads, and approves each element through
-   the public review endpoint.
-2. **Tenant exemplars live in the config file only** (core README, "Known gaps"), and the file is
-   read at start: adding an intent for a tenant means editing the file and restarting. The
-   intent-to-node mapping has an API (`node_routes`), its exemplars do not.
-3. **PII is not protected on `t0_sovereign` models, whatever the PII mode**
-   (`crates/caliban-gateway/src/pipeline.rs`, `use_protected = external && ...`). Every on-prem
-   model of the shipped config is `t0_sovereign`, so a tenant in `mask` mode on on-prem models
-   sends identifiers to the model in clear, while `docs/nodes.md` ("The reference node") says no
-   model call sees them. The node spec's `guardrails.pii` is kept but not enforced
-   (`docs/nodes.md`, "The spec"). The e2e registers its model as `t2_contracted`.
-4. **L0 PII coverage for this market.** The phone patterns (`crates/caliban-pii/src/patterns.rs`)
-   miss Lebanese mobiles with a one-digit prefix (`+961 3 456 789`) and national formats
-   (`06 12 34 56 78`); there is no pattern for national IDs other than US SSNs (Lebanese ID, French
-   NIR). Names need the NER tier (an artifact plus `CALIBAN_PII_NER_DIR`).
-   `DictionaryDetector` (`crates/caliban-pii/src/dictionary.rs`), described as "tenant
-   dictionaries compiled from the ontology", is exported but used nowhere.
-5. **Ontology element ids are not tenant-scoped on review.**
-   `POST /api/v1/ontology/elements/{id}/review` finds the element by id across all tenants
-   (`crates/caliban-cp/src/store/postgres.rs`, `ReviewOntologyElement`; the permission check
-   resolves the tenant the same way, `TenantFrom::OntologyElement`). Two tenants with an element
-   `Service` (likely once introspection proposes entity names) are ambiguous.
-6. **CQIR in a node pins the ontology version**, and every single review is a new version
-   (`ontology_commit` per review). Any later review breaks every published node that queries the
-   datasource (`query was built for ontology medmarket@52, current is ...`) until a new version is
-   published; nothing at publish time checks the version a node's CQIR names.
-7. **Node calls cannot set reasoning or constrained decoding.** `llm` and `router` vertices send
-   `model`, `messages`, `temperature` and `max_tokens` only
-   (`crates/caliban-nodes/src/executor/graph.rs`, `chat_body`), so Qwen3.8 thinks at its default
-   effort on every node call (slow) and JSON outputs rely on prompting plus one corrective retry;
-   note 08 asks for constrained decoding for structured outputs on small models.
-8. **Read-only nodes get almost no injection coverage.** For this node 18 of 20 suite cases are
-   `not_applicable` (no MCP write tool), and the gate ignores the policy's injection bar for
-   versions without write tools (its evidence lists the golden eval only). With
-   `E2E_FOLLOW_INJECTIONS=1` the planted instruction reaches the patient's answer; only the
-   attacker's address is stopped, incidentally, by the PII guard masking it. Answer integrity
-   (instructions from tool results steering free text) has no system-level defence or eval case.
-9. **Node answers lack the documented response headers.** A `caliban/auto` request handed to a
-   node returns `x-caliban-route`, `x-caliban-intent`, `x-caliban-run-status` and
-   `caliban-run-id`, but no `x-caliban-request-id`, `x-caliban-routed-model`,
-   `x-caliban-pii-entities` or `x-caliban-cost-usd` (`crates/caliban-gateway/src/node_chat.rs`,
-   `add_headers`), while the core README says every chat response carries them. The cost is only
-   in the body (`caliban.cost_usd`).
-10. **`caliban/auto` handed to a node is not billed as `caliban/auto`.** The run's usage events are
-    the node's pinned-model calls (`requested_model: e2e/chat`): `auto_requests`, `flat_price_usd`
-    and `billed_usd` stay 0 for the request, so the flat auto price and margin do not apply.
-11. **The query comment is `caliban:caliban:node:<run>:<step>`**: the gateway's audit id already
-    starts with `caliban:` (`crates/caliban-gateway/src/datasource.rs`) and the lowering adds it
-    again (`crates/caliban-ontology/src/compile/mongo.rs`).
-12. **The native lane needs a tagged secondary.** Compiled queries read with
-    `readPreference: secondary` and tag `workload=analytics` (`NativeOptions::default`), so a
-    replica set without such a member (or a standalone server) fails every query unless the
-    connection sets `read_preference`; `docs/tools.md` does not say so. The e2e runs a tagged
-    analytics secondary.
-13. **A loop that exits as designed leaves a `stop_reason`.** The clarification loop
-    (`max_iterations: 2`) ends a succeeded run with `stop_reason: vertex 'assess' reached
-    max_iterations (2); its loop stopped` (`crates/caliban-nodes/src/executor/graph.rs`), which
-    reads like an error.
+| # | Gap at `00945db` | In core `ae553e6` | In the e2e |
+|---|---|---|---|
+| 1 | No public API wrote ontology proposals (setup used `psql` and a restart) | Introspection proposes elements (`POST /api/v1/datasources/{id}/introspect`, `GET .../introspection`), and `POST /api/v1/tenants/{t}/ontology/proposals` takes curated ones (docs/datasources.md) | Setup introspects, proposes the curated CSM over it, reviews in one batch; no `psql`, no restart. Check: introspection succeeded |
+| 2 | Tenant exemplars in the config file only, read at start | `GET`, `PUT`, `DELETE /api/v1/tenants/{t}/intents/{intent}`, picked up with the next snapshot | `config/exemplars.json` through `PUT .../intents/triage`; the rendered config has no tenant table. Check: the intent's `source` is `api`, mapped to the node |
+| 3 | PII not protected on `t0_sovereign` models; `guardrails.pii` not enforced | The tenant's `pii_on_sovereign`; `guardrails.pii` is a floor on every model class and on untrusted tool results | The chat model is registered `t0_sovereign`; the node's `guardrails.pii: mask` masks its calls; `E2E_PII_ON_SOVEREIGN` sets the tenant flag |
+| 4 | L0 missed the reference market's phones and IDs; tenant dictionaries unused | French and Lebanese phone formats, the French NIR by its key, per-tenant `pii_patterns` and `pii_dictionary` | Every identifier but names must be masked; a tenant pattern for the Lebanese-style ID; the NIR carries its valid key |
+| 5 | Ontology review found element ids across tenants | Reviews are tenant-scoped (`/api/v1/tenants/{t}/ontology/...`, or `tenant_id` in the body) | Setup reviews through the tenant's routes |
+| 6 | Every review a new version, breaking pinned CQIR | A review batch is one version; compatible changes keep published nodes working; withdrawing what a published node queries is refused with `409`; publish checks the version | One batch per setup. Check: the batch made one version |
+| 7 | Node calls without reasoning or constrained decoding | `reasoning` and `structured_output` per vertex (and `model_policy.reasoning`) | Both model vertices: `json_schema`, thinking off (`E2E_ASSESS_REASONING`, `E2E_RECOMMEND_REASONING`). Check: the model received `response_format: json_schema` and, on Qwen3, the `enable_thinking` setting |
+| 8 | Read-only nodes barely covered by the injection suite and the gate | Suite v3 `answer_integrity` cases; the answer guard (`guardrails.answer`); the gate requires an injection eval of read-only versions (kept required, no `read_only: optional` here) | Setup runs the injection eval before promotion. Checks: its `answer_integrity` cases ran, the gate's evidence names it, every answer has an `answer_check`; with `E2E_FOLLOW_INJECTIONS=1` the guard must redact |
+| 9 | Node answers lacked the documented headers | `x-caliban-request-id`, `x-caliban-routed-model: node/<name>@v<N>`, `x-caliban-cache: bypass`, `x-caliban-pii-entities`, `x-caliban-cost-usd`, `x-caliban-billed-usd` | Checked on every node answer, the totals against the run |
+| 10 | `caliban/auto` handed to a node not billed as `caliban/auto` | Every call of such a run billed at the flat auto price; the real cost metered next to it (`routed_model_cost_usd`, the run's `model_cost_usd`) | Checks: every usage event `requested_model: caliban/auto` with a flat price, `auto_requests`, routed cost equals `model_cost_usd` |
+| 11 | Query comment `caliban:caliban:node:...` | `caliban:node:<run>:<step>` | Checked on every query the profiler saw |
+| 12 | The native lane's tagged secondary was undocumented | docs/tools.md and docs/datasources.md: queries read from a member tagged `workload: analytics`; without one they fail with an error naming the read preference; `read_preference` on the connection overrides it | The e2e keeps its tagged analytics secondary (the production shape, note 08); a single server or an untagged replica set needs the connection's `read_preference` |
+| 13 | A loop that exited by design left a `stop_reason` | No `stop_reason` when a loop leaves by its exit edge | Check: no `stop_reason` on a succeeded run, the clarification loop included |
+
+Also from core since `00945db`: retrieval's usage carries a `purpose` (`rag.ingest`,
+`rag.search`, totalled in `by_purpose`), checked by the RAG stage; the audit ingest accepts only
+the actions workers decide (`node.run.answer`, `node.write.approve`, `node.write.deny`,
+`node.run.cancel`, `node.eval.finish`), and the e2e's audit check (`node.run.answer`) is one of
+them.
+
+### Still open (core `ae553e6`)
+
+1. **Re-proposing an approved element unchanged withdraws it.** `POST
+   /api/v1/tenants/{t}/ontology/proposals` documents that unchanged elements are skipped, but it
+   compares the stored element with the proposal after setting the proposal's status to
+   `proposed`, and `Element::definition_changes` compares status: an approved element sent again
+   as it is counts as changed, is written back as `proposed` (withdrawn), and is refused with `409`
+   when a published node queries it (`crates/caliban-cp/src/lib.rs`, `propose_ontology`).
+   Setup proposes only the curated elements that are not already approved as the file says.
+2. **A contact in a catalogue row cannot reach the patient under `guardrails.pii: mask`.** The
+   answer guard keeps a phone number that is a whole field value of the data (a row's `phone`), but
+   the PII floor anonymizes untrusted tool results as they enter the run
+   (`crates/caliban-nodes/src/executor/graph.rs`, `guarded_call`), so a facility's phone reaches
+   the model, and the answer, as a placeholder. Business contacts in the tenant's own catalogue are
+   not personal data; the ontology's `pii_class` on an attribute could say so. Read from the code,
+   not yet seen in a run: the seed has no contact field.
+3. **Constrained decoding covers workflow vertices only.** An agent node's final answer
+   (`careguide`, `prompt.output_schema`) is still prompted, with one corrective retry.
+4. **Names need the NER tier** (an artifact plus `CALIBAN_PII_NER_DIR`): without it, the names in
+   R1, R3 and R4 reach the model; the run reports them as known gaps.

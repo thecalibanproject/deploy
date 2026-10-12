@@ -10,11 +10,15 @@ shared account's prefix, confirm before apply, always destroy.
 ## 1. Bring the testbed up
 
 The e2e directory must be in the deploy tree the gateway clones, so push the branch first and
-point `deploy_ref` at it.
+point `deploy_ref` at it. The gateway's Caliban image must come from core `ae553e6` or later: setup
+uses introspection, ontology proposals and review batches, tenant intents, the tenant's PII
+settings and the node spec fields core added there (README, "Gaps in core"), and an older image
+refuses them. In build mode `core_ref` (default `main`) must point at such a commit on GitHub; in
+s3 mode the bundle must hold such an image.
 
 ```sh
 cd aws/testbed
-tofu apply -var gpu_enabled=true -var deploy_ref=e2e-health-triage   # plus your usual -var-file
+tofu apply -var gpu_enabled=true -var deploy_ref=e2e-core-gaps   # plus your usual -var-file
 tofu output ssm_sessions
 ```
 
@@ -36,7 +40,7 @@ curl -s localhost:8000/v1/models | head -c 300; echo               # Qwen/Qwen3.
 ```sh
 sudo -i
 cd "$CALIBAN_DEPLOY_DIR"
-git log -1 --oneline                                               # the e2e-health-triage commit
+git log -1 --oneline                                               # the deploy_ref commit
 export E2E_TARGET=testbed                                          # GPU_IP comes from /etc/profile.d
 e2e/health-triage/e2e.sh up        # e2e services, caliban recreated with the e2e config, seed
 e2e/health-triage/e2e.sh setup     # tenant, datasource, ontology, node, evals (minutes), gate, intent
