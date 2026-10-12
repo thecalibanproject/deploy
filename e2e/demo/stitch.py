@@ -157,9 +157,15 @@ def scenario_parts(name, missing):
     return title, parts
 
 
+def ordered(names):
+    """Scenario names in DEMO_ORDER (run-demo.sh), the others after them in name order."""
+    order = os.environ.get("DEMO_ORDER", "health-triage law developer fintech").split()
+    return sorted(names, key=lambda n: (order.index(n) if n in order else len(order), n))
+
+
 def main():
-    names = sys.argv[1:] or sorted(os.path.basename(p)[:-len(".timeline.json")]
-                                   for p in glob.glob(os.path.join(OUT, "*.timeline.json")))
+    names = sys.argv[1:] or ordered(os.path.basename(p)[:-len(".timeline.json")]
+                                    for p in glob.glob(os.path.join(OUT, "*.timeline.json")))
     if not names:
         sys.exit(f"stitch.py: no <scenario>.timeline.json in {OUT}")
     os.makedirs(os.path.join(OUT, "parts"), exist_ok=True)
@@ -179,13 +185,22 @@ def main():
         missing.append(infra)
     for name in names:
         title, parts = scenario_parts(name, missing)
+        if name == "health-triage":
+            # The health e2e's results card belongs to its use case, right after its checks.
+            src = os.path.join(OUT, "results.webm")
+            if os.path.exists(src):
+                p = os.path.join(OUT, "parts", "results.mp4")
+                normalize(src, p)
+                parts.append((p, "health-triage: the results", ()))
+            else:
+                missing.append(src)
         one = Builder(name)
         for path, t, subs in parts:
             one.add(path, t, subs)
             full.add(path, t, subs)
         if one.parts:
             one.write(os.path.join(OUT, f"{name}.mp4"))
-    for seg, title in (("results", "Health triage: the results"), ("telemetry", "Telemetry")):
+    for seg, title in (("telemetry", "Telemetry"),):
         src = os.path.join(OUT, f"{seg}.webm")
         if os.path.exists(src):
             p = os.path.join(OUT, "parts", f"{seg}.mp4")

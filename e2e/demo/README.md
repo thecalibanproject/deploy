@@ -149,6 +149,16 @@ e2e/demo/run-demo.sh check health-triage
 e2e/demo/run-demo.sh stitch
 ```
 
+`all` records the use cases in `DEMO_ORDER` (health-triage, law, developer, fintech), then any
+other scenario. `stack.sh` (sourced by the runner; source it yourself before `e2e.sh up`, `exec` or
+`down` of a demo stack) adds what the scenarios need to the shared stack through e2e.sh's settings:
+`E2E_EXTRA_COMPOSE` (colon separated; on the testbed the gateway's compose file first, then the
+fintech overlay), `E2E_EXTRA_SERVICES` (the refund system's MCP server), `E2E_EXTRA_CONFIG` (Cedar
+Bank's quotas, appended to the rendered `caliban.toml`) and `E2E_WORK_SUBDIRS`. The developer
+scenario installs the Python SDK from `DEV_SDK_SRC`; a wheel on the host is mounted into the
+Playwright container with `DEMO_MOUNTS` (colon separated host paths, read-only). `DEV_*` and
+`FINTECH_*` settings reach the scenarios like `E2E_*` and `DEMO_*`.
+
 For each scenario: `e2e/<scenario>/seed.py` when it exists, the recording, then `e2e/<scenario>/check.py`
 recorded as a terminal segment (its exit status is the scenario's verdict). The environment is the
 shared stack's (`e2e.sh exec`): `CALIBAN_ADMIN_TOKEN`, `E2E_CP_URL`, `E2E_ROUTER_URL`, `E2E_WORK_DIR`,

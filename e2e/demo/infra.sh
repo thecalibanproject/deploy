@@ -8,8 +8,8 @@
 set -euo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-E2E_DIR="$(dirname "$DEMO_DIR")"
-DEPLOY_DIR="$(cd "$E2E_DIR/../.." && pwd)"
+E2E_DIR="$(dirname "$DEMO_DIR")/health-triage"
+DEPLOY_DIR="$(cd "$DEMO_DIR/../.." && pwd)"
 E2E_WORK_DIR="${E2E_WORK_DIR:-$E2E_DIR/.work}"
 
 say() { printf '\n\033[1;33m# %s\033[0m\n' "$*"; sleep "${DEMO_TERM_PAUSE:-1}"; }
@@ -34,7 +34,7 @@ models_check() {
 
 case "${1:-}" in
   up)
-    say "Caliban on the gateway host: one compose stack. The e2e adds a MongoDB replica set (primary and an analytics secondary) with a synthetic catalogue, and a recorder in front of the model."
+    say "Caliban on the gateway host: one compose stack. The e2e adds a MongoDB replica set (primary and an analytics secondary) with synthetic data for the four use cases, a recorder in front of the model, and the bank's refund system as an MCP server."
     show git -C "$DEPLOY_DIR" log -1 --oneline
     show "$E2E_DIR/e2e.sh" up
     models_check

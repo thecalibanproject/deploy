@@ -1,1 +1,3 @@
 __pycache__/
+# The pinned images are not secrets (the root .gitignore ignores images.env files).
+!images.env

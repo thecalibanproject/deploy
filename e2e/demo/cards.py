@@ -55,6 +55,12 @@ code { font-family: ui-monospace, "Liberation Mono", monospace; font-size: 16px;
 """
 
 
+def ordered(names):
+    """Scenario names in DEMO_ORDER (run-demo.sh), the others after them in name order."""
+    order = os.environ.get("DEMO_ORDER", "health-triage law developer fintech").split()
+    return sorted(names, key=lambda n: (order.index(n) if n in order else len(order), n))
+
+
 def esc(s):
     return html.escape(str(s if s is not None else ""), quote=True)
 
@@ -88,8 +94,10 @@ def render_cards(pw):
     browser = pw.chromium.launch()
     page = browser.new_page(viewport={"width": 1920, "height": 1080})
     cards = dict(CARDS)
-    for i, tl in enumerate(sorted(glob.glob(os.path.join(OUT, "*.timeline.json")))):
-        name = os.path.basename(tl)[:-len(".timeline.json")]
+    names = ordered(os.path.basename(p)[:-len(".timeline.json")]
+                    for p in glob.glob(os.path.join(OUT, "*.timeline.json")))
+    for i, name in enumerate(names):
+        tl = os.path.join(OUT, f"{name}.timeline.json")
         with open(tl, encoding="utf-8") as f:
             t = json.load(f)
         verdict = ""

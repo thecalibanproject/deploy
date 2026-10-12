@@ -103,6 +103,12 @@ for f in ${E2E_EXTRA_COMPOSE//:/ }; do EXTRA_FILES+=(-f "$f"); done
 FILES=(-f "$DEPLOY_DIR/compose/docker-compose.yml" "${EXTRA_FILES[@]}")
 FILES+=(-f "$E2E_DIR/docker-compose.e2e.yml")
 E2E_SERVICES=(caliban-e2e-mongo caliban-e2e-mongo-analytics caliban-e2e-model)
+# E2E_EXTRA_SERVICES: services of those overlays started and removed with the e2e's own on the
+# testbed (locally `up` starts every service of the project). E2E_EXTRA_CONFIG: TOML files appended
+# to the rendered caliban.toml. E2E_WORK_SUBDIRS: directories created in the work directory before
+# `up`, so that a bind mount does not create them owned by root. e2e/demo/stack.sh sets all four
+# for the recorded demo's scenarios.
+for s in ${E2E_EXTRA_SERVICES//:/ }; do E2E_SERVICES+=("$s"); done
 
 dc() { docker compose -p "$E2E_PROJECT" --env-file "$E2E_STACK_ENV" "${FILES[@]}" "$@"; }
 envval() { sed -n "s/^$1=//p" "$E2E_STACK_ENV" | tail -n 1; }
@@ -111,6 +117,8 @@ envval() { sed -n "s/^$1=//p" "$E2E_STACK_ENV" | tail -n 1; }
 
 secrets() {
   mkdir -p "$E2E_WORK_DIR/model-log"
+  local sub
+  for sub in ${E2E_WORK_SUBDIRS:-}; do mkdir -p "$E2E_WORK_DIR/$sub"; done
   chmod 700 "$E2E_WORK_DIR"
   if [[ "$E2E_TARGET" == local && ! -f "$E2E_STACK_ENV" ]]; then
     log "generating local stack secrets in $E2E_STACK_ENV"
@@ -192,6 +200,13 @@ EOF
     esac
     echo "auto_price_in_per_mtok = 3.0"
     echo "auto_price_out_per_mtok = 12.0"
+    local extra
+    for extra in ${E2E_EXTRA_CONFIG//:/ }; do
+      [[ -f "$extra" ]] || die "E2E_EXTRA_CONFIG: $extra not found"
+      echo
+      echo "# ───────────── appended from $extra ─────────────"
+      cat "$extra"
+    done
     if [[ "$E2E_ROUTING_PRESET" == mock ]]; then
       cat <<'EOF'
 

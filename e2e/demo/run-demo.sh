@@ -33,6 +33,12 @@ export DEMO_OUT="${DEMO_OUT:-$E2E_WORK_DIR/demo}"
 # shellcheck source=e2e/demo/images.env
 . "$DEMO_DIR/images.env"
 export DEMO_PLAYWRIGHT_IMAGE DEMO_AGG_IMAGE DEMO_FFMPEG_IMAGE
+# The shared stack's additions for every scenario (overlays, quotas, services); DEMO_STACK=0 skips.
+# shellcheck source=e2e/demo/stack.sh
+. "$DEMO_DIR/stack.sh"
+# The order of the use cases in `all`; scenarios not named here follow in name order.
+: "${DEMO_ORDER:=health-triage law developer fintech}"
+export DEMO_ORDER
 
 die() { echo "run-demo.sh: $*" >&2; exit 1; }
 log() { echo ">> $*"; }
@@ -40,9 +46,14 @@ local_mode() { [[ "${DEMO_LOCAL:-0}" == 1 ]]; }
 
 scenarios() {
   if [[ $# -eq 0 || "$1" == all ]]; then
-    local d
+    local d n
+    for n in $DEMO_ORDER; do
+      [[ -f "$E2E_ROOT/$n/demo/scenario.py" ]] && echo "$n"
+    done
     for d in "$E2E_ROOT"/*/demo/scenario.py; do
-      [[ -f "$d" ]] && basename "$(dirname "$(dirname "$d")")"
+      [[ -f "$d" ]] || continue
+      n="$(basename "$(dirname "$(dirname "$d")")")"
+      [[ " $DEMO_ORDER " == *" $n "* ]] || echo "$n"
     done
   else
     printf '%s\n' "$@"
@@ -75,8 +86,10 @@ fonts() {
 }
 
 # Python in the pinned Playwright image (or DEMO_PYTHON locally), with the e2e's environment:
-# E2E_*, DEMO_*, CALIBAN_ADMIN_TOKEN and the names in DEMO_PASS_ENV, never the MongoDB root
-# credentials or key file.
+# E2E_*, DEMO_*, the scenarios' own DEV_* and FINTECH_*, CALIBAN_ADMIN_TOKEN and the names in
+# DEMO_PASS_ENV, never the MongoDB root credentials or key file. DEMO_MOUNTS (colon separated) are
+# host paths mounted read-only at the same path, such as the directory of the SDK wheel that
+# DEV_SDK_SRC names.
 pyrun() {
   if local_mode; then
     "${DEMO_PYTHON:-python3}" "$@"
@@ -89,9 +102,11 @@ pyrun() {
   while IFS= read -r name; do
     case "$name" in
       E2E_MONGO_KEYFILE|E2E_MONGO_ROOT_*|E2E_COMPOSE_CMD) ;;
-      E2E_*|DEMO_*|CALIBAN_ADMIN_TOKEN) args+=(-e "$name") ;;
+      E2E_*|DEMO_*|DEV_*|FINTECH_*|CALIBAN_ADMIN_TOKEN) args+=(-e "$name") ;;
     esac
   done < <(compgen -e)
+  local m
+  for m in ${DEMO_MOUNTS//:/ }; do args+=(-v "$m:$m:ro"); done
   for name in ${DEMO_PASS_ENV:-}; do args+=(-e "$name"); done
   docker run "${args[@]}" "$DEMO_PLAYWRIGHT_IMAGE" python3 "$@"
 }
@@ -178,7 +193,7 @@ _steps() {
     check "$s" || true
   done
   cards "$@" || FAILED+=("cards")
-  stitch || FAILED+=("stitch")
+  stitch "$@" || FAILED+=("stitch")
   [[ "${DEMO_UPLOAD:-0}" == 1 ]] && upload
   log "outputs in $DEMO_OUT: caliban-demo.mp4, <scenario>.mp4, telemetry.md, shots/, timelines"
   if [[ ${#FAILED[@]} -gt 0 ]]; then
