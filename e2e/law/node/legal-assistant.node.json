@@ -1,0 +1,85 @@
+{
+  "kind": "workflow",
+  "description": "Hadad & Associés legal assistant: classifies a lawyer's request (a matter question, a conflict check or legal research) and hands it to the pinned matter-desk or research node, under one budget. The answer is the subnode's: a short answer, the matter references used, the conflict verdict and the citations.",
+  "prompt": {
+    "system": "You are the intake of a law firm's legal assistant. You route each request to the right desk; you never answer it yourself.",
+    "input_schema": {
+      "type": "object",
+      "required": ["question"],
+      "additionalProperties": false,
+      "properties": {
+        "question": { "type": "string", "minLength": 3, "maxLength": 6000, "description": "The lawyer's request, possibly with a forwarded client e-mail" }
+      }
+    },
+    "output_schema": {
+      "type": "object",
+      "required": ["answer", "language", "kind", "matters", "conflict", "citations"],
+      "additionalProperties": false,
+      "properties": {
+        "answer": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "language": { "enum": ["fr", "en", "ar"] },
+        "kind": { "enum": ["deadlines", "status", "billing", "conflict_check", "legal_research", "unknown"] },
+        "matters": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 40 } },
+        "conflict": { "enum": ["none", "possible", "conflict", "not_applicable"] },
+        "citations": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["n", "doc_id"],
+            "additionalProperties": false,
+            "properties": { "n": { "type": "integer", "minimum": 1, "maximum": 20 }, "doc_id": { "type": "string", "maxLength": 200 } }
+          }
+        }
+      }
+    }
+  },
+  "model_policy": { "model": "__CHAT_MODEL__", "intent_classes": ["classification"], "reasoning": "off" },
+  "tools": [
+    { "ref": "node://matter-desk@v__MATTER_DESK_VERSION__", "effect": "read" },
+    { "ref": "node://research@v__RESEARCH_VERSION__", "effect": "read" }
+  ],
+  "guardrails": { "pii": "reversible", "answer": "redact" },
+  "budgets": { "steps": 14, "tokens": 120000, "wall_clock_s": 900, "usd": 0.6, "depth": 2, "fanout": 1 },
+  "exposure": { "http": true },
+  "graph": {
+    "entry": "intake",
+    "vertices": [
+      {
+        "id": "intake",
+        "type": "router",
+        "config": {
+          "system": "[law:intake] Classify a request from a lawyer of the firm into exactly one of the labels below. Answer with the label only.",
+          "prompt": "Request:\n<<<\n{{input.question}}\n>>>",
+          "reasoning": "__INTAKE_REASONING__",
+          "structured_output": "json_schema",
+          "routes": {
+            "matter_desk": "A question about the firm's own matters or clients: status, deadlines, hearings, billing, hours, or a forwarded client e-mail to summarise against the file",
+            "conflict_check": "A conflict-of-interest check before taking on a new client or a new matter against someone",
+            "research": "A question of law: statutes, codes, doctrine, the firm's memos and templates, with sources"
+          }
+        }
+      },
+      {
+        "id": "desk",
+        "type": "subnode",
+        "config": { "node": "node://matter-desk@v__MATTER_DESK_VERSION__", "input": { "question": "{{input.question}}", "task": "matter" } }
+      },
+      {
+        "id": "conflicts",
+        "type": "subnode",
+        "config": { "node": "node://matter-desk@v__MATTER_DESK_VERSION__", "input": { "question": "{{input.question}}", "task": "conflict_check" } }
+      },
+      {
+        "id": "research",
+        "type": "subnode",
+        "config": { "node": "node://research@v__RESEARCH_VERSION__", "input": { "question": "{{input.question}}" } }
+      }
+    ],
+    "edges": [
+      { "from": "intake", "to": "desk", "when": "matter_desk" },
+      { "from": "intake", "to": "conflicts", "when": "conflict_check" },
+      { "from": "intake", "to": "research", "when": "research" }
+    ]
+  }
+}
