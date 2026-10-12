@@ -69,6 +69,25 @@ class Rows(unittest.TestCase):
             finally:
                 telemetry.OUT = old
 
+    def test_rotate_starts_fresh(self):
+        """A new recording's report holds only its own rows and evals, not an earlier run's."""
+        with tempfile.TemporaryDirectory() as d:
+            old = telemetry.OUT
+            telemetry.OUT = d
+            try:
+                for _ in range(2):  # two recordings of the same scenario
+                    telemetry.rotate("health")
+                    telemetry.append("health", {"kind": "request", "label": "R1", "client": {"total_ms": 1.0}})
+                    telemetry.append("health", {"kind": "eval", "label": "golden", "trials": 18})
+                rows = telemetry.rows(telemetry.load("health"))
+                self.assertEqual([r["label"] for r in rows], ["R1"])
+                self.assertEqual(len(telemetry.evals(telemetry.load("health"))), 1)
+                self.assertEqual(len(os.listdir(os.path.join(d, "history"))), 1)
+                self.assertEqual(telemetry.scenarios_found(), ["health"])
+                self.assertIsNone(telemetry.rotate("absent"))
+            finally:
+                telemetry.OUT = old
+
     def test_percentiles(self):
         self.assertEqual(telemetry.pct([1, 2, 3, 4, 100], 50), 3)
         self.assertEqual(telemetry.pct([1, 2, 3, 4, 100], 95), 100)

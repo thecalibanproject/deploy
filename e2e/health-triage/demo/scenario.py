@@ -454,6 +454,7 @@ def evals(ctx):
     min_pass = float(os.environ.get("E2E_MIN_PASS_K", "0.8"))
     ctx.goto(f"/nodes/{TENANT}/{NODE}?tab=evals&ev={ver}")
     expect(page.get_by_role("tab", name="Evals")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_role("heading", name=f"Evals of v{ver}")).to_be_visible()
     ctx.caption("Evals", "Before a version goes live it must meet the node's promotion bar: golden cases run k times "
                 "each, and the prompt injection suite.", stage="Nodes", hold=2.5)
     ctx.click(page.get_by_role("button", name="Edit bar"))
@@ -661,13 +662,20 @@ def follow(key, run_id):
         dp("GET", f"/v1/runs/{run_id}", key).body), timeout=int(os.environ.get("E2E_RUN_TIMEOUT_S", "600")), every=1.0)
 
 
-def show_run(ctx, run_id, lines, outputs=()):
-    """Opens a run in the console and walks the viewer through it."""
+def show_run(ctx, run_id, lines, outputs=(), ended=True):
+    """Opens a run in the console and walks the viewer through it (`ended`: wait until the page
+    shows it ended; False for a run that waits for a human)."""
     page = ctx.page
     ctx.hide_panel()
     ctx.goto(f"/runs/{TENANT}/{run_id}")
+    # The page shows this run (not the one shown before) before anything is said about it.
+    expect(page.get_by_role("heading", level=1, name=run_id, exact=True)).to_be_visible()
     steps = page.get_by_role("table", name="Steps")
     expect(steps).to_be_visible()
+    if ended:
+        expect(page.get_by_text("Refreshing while the run is not ended.")).to_be_hidden(timeout=120000)
+    else:
+        expect(page.get_by_text("Waiting for an answer")).to_be_visible()
     targets = {"billed": page.get_by_text("Model cost", exact=True), "pii": page.get_by_text("Personal data", exact=True),
                "guard": page.get_by_text(re.compile(r"^Answer guard")), "steps": steps}
     for stage, line, target in lines:
@@ -750,6 +758,7 @@ STAGE_LINE = {
 
 def requests(ctx):
     """Requests through caliban/auto"""
+    page = ctx.page
     results = []
     ctx.caption("Requests", "The marketplace app sends plain OpenAI chat completions to caliban/auto with its key. No "
                 "Caliban-specific field: the gateway decides.", stage="Route", hold=3)
@@ -776,7 +785,8 @@ def requests(ctx):
                     stage="Route", hold=4)
         if asked:
             show_run(ctx, rec["run_id"], [("Nodes", "The run waits at the human step: the console shows the question, "
-                                           "and the customer app answers it through the run API.", None)])
+                                           "and the customer app answers it through the run API.", None)],
+                     ended=False)
             rec = answer_question(ctx, rec, spec.get("answer") or spec.get("fallback_answer"))
             ctx.caption(spec["id"], "The run resumed: assess again with the answer, then the queries and the "
                         "recommendation.", stage="Nodes", hold=4)
@@ -798,6 +808,13 @@ def requests(ctx):
         with open(os.path.join(ctx.out_dir, f"{NAME}-requests.json"), "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
     ctx.hide_panel()
+    # The chapter ends on the tenant's runs, the last request's first: what the caption says is on screen.
+    last = next((r.get("run_id") for r in reversed(results) if r.get("run_id")), None)
+    ctx.goto(f"/runs?tenant={TENANT}")
+    if last:
+        expect(page.get_by_text(last, exact=True).first).to_be_visible()
+    ctx.caption("Runs", f"Every node run of {TENANT}, newest first: status, version, who started it, cost and "
+                "duration.", stage="Nodes", hold=4)
 
 
 # ─────────────────────────── retrieval (E2E_RAG=1) ───────────────────────────
@@ -913,6 +930,7 @@ def retrieval(ctx):
     if not v.get("live"):
         # A version with read tools goes live only after a finished injection eval (the gate).
         ctx.goto(f"/nodes/{TENANT}/{e2e_rag.NODE}?tab=evals&ev={ver}")
+        expect(page.get_by_role("heading", name=f"Evals of v{ver}")).to_be_visible()
         ctx.caption("careguide", "It reads documents, so the gate wants an injection eval before it goes live: the "
                     "attacks ride on a coverage question.", stage="Nodes", hold=2)
         ctx.click(page.get_by_role("button", name="Start eval").first)
