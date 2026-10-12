@@ -1,0 +1,35 @@
+# Law firm demo: an extra overlay on top of the shared e2e stack (compose/docker-compose.yml plus
+# e2e/health-triage/docker-compose.e2e.yml), needed only where no real model serves the scenario
+# (local runs). On the testbed the catalogue entry law/chat points at the shared recorder in front
+# of Qwen3.8 (E2E_CHAT_BASE_URL), and this file is not needed.
+#
+#   caliban-e2e-law-model   the law scenario's scripted model (e2e/law/mock/model.py), on the
+#                           internal backend network only (it calls nothing); every request it
+#                           receives is logged to $E2E_WORK_DIR/model-log/law-requests.jsonl
+#
+# Add it to the compose files of the shared project (e2e.sh's FILES), for example:
+#   docker compose -p caliban-e2e ... -f e2e/health-triage/docker-compose.e2e.yml -f e2e/law/docker-compose.law.yml up -d caliban-e2e-law-model
+# Paths are absolute through E2E_DIR (the health-triage directory), like the shared overlay's.
+
+services:
+  caliban-e2e-law-model:
+    image: ${E2E_PYTHON_IMAGE:-python:3.11-slim}
+    container_name: caliban-e2e-law-model
+    user: "${E2E_UID:-1000}:${E2E_GID:-1000}"
+    command: ["python3", "-u", "/e2e/law-mock/model.py"]
+    read_only: true
+    environment:
+      MOCK_LOG: /log/law-requests.jsonl
+      LAW_MOCK_FOLLOW_INJECTIONS: ${E2E_LAW_FOLLOW_INJECTIONS:-1}
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ${E2E_DIR:?run e2e.sh up}/../law/mock:/e2e/law-mock:ro
+      - ${E2E_WORK_DIR:?run e2e.sh up}/model-log:/log
+    networks: [backend]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
