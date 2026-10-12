@@ -381,7 +381,7 @@ recommendations, all licensed for on-prem redistribution:
 | Store | Recommended | Wire it with |
 |---|---|---|
 | Postgres 17 | [CloudNativePG](https://cloudnative-pg.io) operator (Apache-2.0) | `database.existingSecret=<cluster>-app`, `database.urlKey=uri` |
-| Qdrant | official `qdrant/qdrant` chart (Apache-2.0). Set `QDRANT__TELEMETRY_DISABLED=true`. | `qdrant.url=http://qdrant.<ns>.svc:6333` |
+| Qdrant | official `qdrant/qdrant` chart (Apache-2.0), Qdrant **1.19.2 or later** (retrieval filters every search; earlier versions could return no results when the HNSW entry point did not match the filter). Set `QDRANT__TELEMETRY_DISABLED=true`. | `qdrant.url=http://qdrant.<ns>.svc:6333` |
 | Valkey | official `valkey` chart (BSD-3) | `valkey.existingSecret` with the `redis://:pw@host:6379/0` URL |
 
 Avoid Bitnami charts and images for air-gapped installs. Since 2025 most Bitnami images are

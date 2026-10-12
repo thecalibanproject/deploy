@@ -7,10 +7,13 @@
 # Pin by digest (ref@sha256:...) once validated; bundle.sh records digests in images.txt.
 # Tags checked on 2026-10-02: TEI 1.9.4 (2026-09-15), llama.cpp server-b11347 (and its
 # server-cuda build), Ollama 0.35.0 (2026-09-28). vLLM v0.31.0 (2026-10-05) checked on 2026-10-11:
-# it fixes the cache_salt / LoRA prefix-cache collision of v0.30.0 (#51899, #59335).
+# it fixes the cache_salt / LoRA prefix-cache collision of v0.30.0 (#51899, #59335). Qdrant v1.19.2
+# (2026-10-05) checked on 2026-10-12: earlier versions could return no results for a filtered search
+# when the HNSW entry point did not match the filter, and every retrieval search is filtered (core
+# docs/rag.md, research note 06).
 core  CALIBAN_IMAGE   caliban/caliban:@VERSION@
 core  POSTGRES_IMAGE  postgres:17.11-bookworm
-core  QDRANT_IMAGE    qdrant/qdrant:v1.19.1-unprivileged
+core  QDRANT_IMAGE    qdrant/qdrant:v1.19.2-unprivileged
 core  VALKEY_IMAGE    valkey/valkey:9.1.2
 qwen3-small,qwen3-large,qwen3-moe,gpt-oss,reranker  VLLM_IMAGE  vllm/vllm-openai:v0.31.0
 embeddings  TEI_IMAGE      ghcr.io/huggingface/text-embeddings-inference:cuda-1.9.4

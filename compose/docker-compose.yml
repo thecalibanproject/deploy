@@ -224,7 +224,7 @@ services:
   qdrant:
     <<: *hardening
     # "-unprivileged" variant runs as uid 1000.
-    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.1-unprivileged}
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.2-unprivileged}
     environment:
       QDRANT__TELEMETRY_DISABLED: "true"
       QDRANT__LOG_LEVEL: INFO

@@ -336,6 +336,14 @@ jobs:
             || { echo "::error::GPU12_CHAT_CACHE_PROMPT"; exit 1; }
           grep -qE '^gpu-12gb +LLAMACPP_CUDA_IMAGE +ghcr.io/ggml-org/llama.cpp:server-cuda-b11347$' airgap/images.lock \
             || { echo "::error::airgap/images.lock must pin LLAMACPP_CUDA_IMAGE"; exit 1; }
+      - name: Qdrant is 1.19.2 or later, the same in compose and the airgap lock
+        run: |
+          # Retrieval filters every search; earlier versions could return no results when the
+          # HNSW entry point did not match the filter (core docs/rag.md, research note 06).
+          img=$(docker compose -f compose/docker-compose.yml config --format json | jq -r '.services.qdrant.image')
+          [ "$img" = qdrant/qdrant:v1.19.2-unprivileged ] || { echo "::error::compose qdrant image is $img"; exit 1; }
+          grep -qE "^core +QDRANT_IMAGE +$img\$" airgap/images.lock \
+            || { echo "::error::airgap/images.lock must pin $img"; exit 1; }
       - name: Standalone keeps its usage spool on a volume and gets numeric node settings
         run: |
           cfg=$(docker compose -f compose/docker-compose.yml config --format json)
