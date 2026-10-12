@@ -1,0 +1,19 @@
+{
+  "_comment": "Messages with several problems in one: one intent for the set, handed to the orchestrator, which splits them (research note 02: agent routing is set-valued).",
+  "intents": {
+    "multi_issue": [
+      "I was double charged on my card and the export button crashes the app",
+      "my invoice is wrong and also the editor freezes when I paste an image",
+      "I need a refund and I also want to know how to export a report",
+      "the sync is broken and I was charged twice this month",
+      "how do I invite a teammate, and why was I billed for a seat I removed",
+      "the app crashes on login and my card was charged two times",
+      "j'ai été prélevé deux fois et l'export plante à chaque fois",
+      "ma facture est fausse et en plus l'application plante",
+      "comment exporter un rapport, et pourquoi ai-je été facturé deux fois",
+      "تم خصم المبلغ مرتين والتطبيق يتعطل عند التصدير",
+      "الفاتورة غير صحيحة كما أن التطبيق يتعطل",
+      "كيف أصدر تقريرًا ولماذا تم خصم المبلغ مرتين"
+    ]
+  }
+}
