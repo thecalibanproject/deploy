@@ -68,7 +68,12 @@ with_env() {
 pull() {
   local_mode && { log "DEMO_LOCAL=1: nothing to pull"; return; }
   local img
-  for img in "$DEMO_PLAYWRIGHT_IMAGE" "$DEMO_AGG_IMAGE" "$DEMO_FFMPEG_IMAGE"; do
+  # The agg image is amd64 only: on an arm64 host (the testbed's c8g gateway) set DEMO_AGG to the
+  # release binary (agg-aarch64-unknown-linux-gnu v1.9.0, digest checked) and it is not pulled.
+  local imgs=("$DEMO_PLAYWRIGHT_IMAGE")
+  [[ -n "${DEMO_AGG:-}" ]] || imgs+=("$DEMO_AGG_IMAGE")
+  [[ -n "${DEMO_FFMPEG:-}" ]] || imgs+=("$DEMO_FFMPEG_IMAGE")
+  for img in "${imgs[@]}"; do
     log "pulling $img"
     docker pull -q "$img"
   done

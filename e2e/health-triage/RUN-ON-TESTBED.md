@@ -135,7 +135,7 @@ the bundle):
 | Image | Use |
 |---|---|
 | `mcr.microsoft.com/playwright/python:v1.63.0-noble` | Chromium and Python Playwright: the console recordings and the cards |
-| `ghcr.io/asciinema/agg:1.9.0` | The terminal recordings, asciicast to GIF |
+| `ghcr.io/asciinema/agg:1.9.0` | The terminal recordings, asciicast to GIF (amd64 only: on the arm64 gateway, `DEMO_AGG=<path>` to the release's `agg-aarch64-unknown-linux-gnu`, sha256 `2b4be407b97e00e1c313a41d154ced8fa3d02c560c8f47a0db4950a2576444c9`, and the image is not pulled) |
 | `jrottenberg/ffmpeg:8.0.3-ubuntu2404` | MP4 encoding, cuts, concatenation, chapter markers |
 
 Outputs, in `e2e/health-triage/.work/demo/`: `caliban-demo.mp4` (everything, with chapter
