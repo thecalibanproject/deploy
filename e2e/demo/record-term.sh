@@ -42,19 +42,27 @@ echo "$status" > "$out/$name.status"
 python3 "$DEMO_DIR/cast.py" "$out/$name.typescript" "$out/$name.timing" "$out/$name.cast" \
   --cols "$COLS" --rows "$ROWS" --title "Caliban demo: $name"
 
-# The fonts come from the Playwright image (run-demo.sh fonts): agg's image has none.
+# The fonts come from the Playwright image (run-demo.sh fonts): agg's image has none. Without them,
+# or when none of the families is found, agg's own defaults are used.
 fonts="$DEMO_OUT/fonts"
 agg_args=(--font-size "${DEMO_TERM_FONT_SIZE:-26}" --theme "${DEMO_TERM_THEME:-monokai}"
   --idle-time-limit "${DEMO_TERM_IDLE_S:-1.5}" --speed "${DEMO_TERM_SPEED:-1}" --last-frame-duration 3
   --fps-cap 15 --no-loop --quiet)
-if [[ -d "$fonts" ]]; then
-  agg_args+=(--font-dir "$fonts" --font-family "${DEMO_TERM_FONTS:-Liberation Mono,FreeMono,Unifont}")
+font_args=()
+if compgen -G "$fonts/*" >/dev/null; then
+  font_args=(--font-dir "$fonts" --font-family "${DEMO_TERM_FONTS:-Liberation Mono,FreeMono,Unifont}")
 fi
-if [[ -n "${DEMO_AGG:-}" ]]; then
-  "$DEMO_AGG" "${agg_args[@]}" "$out/$name.cast" "$out/$name.gif"
-else
-  docker run --rm --user "$(id -u):$(id -g)" -v "$DEMO_OUT:$DEMO_OUT" -w "$out" \
-    "$DEMO_AGG_IMAGE" "${agg_args[@]}" "$out/$name.cast" "$out/$name.gif"
+agg() {
+  if [[ -n "${DEMO_AGG:-}" ]]; then
+    "$DEMO_AGG" "$@"
+  else
+    docker run --rm --user "$(id -u):$(id -g)" -v "$DEMO_OUT:$DEMO_OUT" -w "$out" "$DEMO_AGG_IMAGE" "$@"
+  fi
+}
+if ! agg "${agg_args[@]}" "${font_args[@]}" "$out/$name.cast" "$out/$name.gif"; then
+  [[ ${#font_args[@]} -gt 0 ]] || die "agg failed"
+  echo "record-term.sh: agg failed with the copied fonts; again with its defaults" >&2
+  agg "${agg_args[@]}" "$out/$name.cast" "$out/$name.gif"
 fi
 
 vf="scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x272822"

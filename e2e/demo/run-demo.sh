@@ -19,6 +19,7 @@
 # go on; the exit status is non-zero then. The environment is the shared e2e stack's
 # (e2e/health-triage/e2e.sh exec); E2E_TARGET=testbed on the testbed.
 #
+# DEMO_INFRA=0 leaves the gateway-host recording out (the stack must be up already).
 # DEMO_LOCAL=1 runs without Docker: DEMO_PYTHON (a Python with playwright==1.63.0 and Chromium),
 # DEMO_AGG and DEMO_FFMPEG (local binaries).
 set -euo pipefail
@@ -81,7 +82,7 @@ pyrun() {
     "${DEMO_PYTHON:-python3}" "$@"
     return
   fi
-  local args=(--rm --init --ipc=host --network host --user "$(id -u):$(id -g)" -e HOME=/tmp
+  local args=(--rm --init --ipc=host --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1
     -v "$DEPLOY_DIR:$DEPLOY_DIR:ro" -v "$E2E_WORK_DIR:$E2E_WORK_DIR" -w "$DEMO_DIR")
   [[ "$DEMO_OUT" == "$E2E_WORK_DIR"/* ]] || args+=(-v "$DEMO_OUT:$DEMO_OUT")
   local name
@@ -162,7 +163,9 @@ everything() {
   [[ ${#list[@]} -gt 0 ]] || die "no scenario found under $E2E_ROOT/*/demo/scenario.py"
   pull
   fonts
-  infra || die "the gateway host is not up (term/infra-up.mp4 shows why)"
+  if [[ "${DEMO_INFRA:-1}" == 1 ]]; then
+    infra || die "the gateway host is not up (term/infra-up.mp4 shows why)"
+  fi
   with_env _steps "${list[@]}"
 }
 

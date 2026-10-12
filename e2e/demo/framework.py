@@ -25,6 +25,11 @@ from playwright.sync_api import expect, sync_playwright
 
 import telemetry
 
+# Run as a script, this module is __main__: scenarios that `import framework` must get this same
+# module (one ApiError class, one set of constants), not a second copy.
+if __name__ == "__main__":
+    sys.modules.setdefault("framework", sys.modules[__name__])
+
 DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
 E2E_ROOT = os.path.dirname(DEMO_DIR)
 WORK = os.environ.get("E2E_WORK_DIR") or os.path.join(E2E_ROOT, "health-triage", ".work")
@@ -162,7 +167,8 @@ SEG_COLOURS = {"auth": "#a5b4fc", "route": "#7dd3fc", "embed": "#67e8f9", "pii":
 
 
 def steps_text(steps):
-    return ", ".join(f"{s.get('vertex')} {telemetry.ms(s.get('duration_ms'))}" for s in steps) or "-"
+    return " · ".join(f"{s.get('vertex')} {s.get('duration_ms') if s.get('duration_ms') is not None else '-'}"
+                      for s in steps) or "-"
 
 
 def timing_html(timing, steps=None):
@@ -186,7 +192,7 @@ def timing_html(timing, steps=None):
         bar = "".join(
             f'<span style="flex:{max(d, 0.001)};background:{SEG_COLOURS.get(k, "#94a3b8")}" '
             f'title="{esc(k)}">{esc(k)} {d:.0f}</span>' for k, d in segs)
-        descs = ", ".join(f"{k} {esc(v.get('desc'))}" for k, v in st.items() if v.get("desc"))
+        descs = ", ".join(f"{k} {esc(v.get('desc'))}" for k, v in st.items() if v.get("desc") and k != "node")
         parts.append(f'<h4>Timing (Server-Timing)</h4><div class="tbar">{bar}</div>'
                      f'<div class="tlegend">gateway total {total:.0f} ms · client total {cl.get("total_ms", 0):.0f} ms'
                      f'{" · " + descs if descs else ""}</div>')
@@ -196,9 +202,7 @@ def timing_html(timing, steps=None):
                      '(no Server-Timing header from this build)</div>')
     steps = steps if steps is not None else timing.get("steps")
     if steps:
-        rows = "".join(f'<tr><td class="k">{esc(s.get("vertex") or s.get("id"))}</td><td>{esc(s.get("kind"))}</td>'
-                       f'<td>{esc(s.get("duration_ms"))} ms</td></tr>' for s in steps)
-        parts.append(f"<h4>Node steps</h4><table>{rows}</table>")
+        parts.append(f'<div class="tlegend">node steps (ms): {esc(steps_text(steps))}</div>')
     return "".join(parts)
 
 
@@ -216,6 +220,7 @@ def client_html(title, request_json, status=None, headers=None, body=None, *, me
     else:
         tone = "ok" if 200 <= int(status) < 300 else "warn"
         right.append(f'<p><span class="badge {tone}">HTTP {esc(status)}</span></p>')
+        right.append(timing_html(timing))
     shown = {k: v for k, v in (headers or {}).items() if v and (k.startswith("x-caliban") or k.startswith("caliban-")
                                                               or k in ("run", "status"))}
     if shown:
@@ -225,8 +230,6 @@ def client_html(title, request_json, status=None, headers=None, body=None, *, me
     if text:
         right.append(f'<h4>Answer</h4><div class="answer"{" dir=rtl" if rtl else ""}>{esc(text[:1500])}</div>')
     right.append(extra or "")
-    if status is not None:
-        right.append(timing_html(timing))
     left = f"<h4>Request</h4><pre>{esc(req)}</pre>"
     if model_saw:
         left += f"<h4>What the model received</h4><pre>{mark_placeholders(model_saw)}</pre>"
@@ -447,7 +450,7 @@ class Ctx:
             ms = telemetry.ms
             body = "".join(
                 f'<tr><td class="k">{esc(r["label"])}</td><td>{esc(r["intent"] or "-")}</td>'
-                f'<td>{esc(r["route_stage"] or "-")}</td><td>{ms(r["classify_ms"])}</td><td>{ms(r["pii_ms"])}</td>'
+                f'<td>{esc(r["route_stage"] or "-")}</td><td>{esc(telemetry.classify_text(r))}</td><td>{ms(r["pii_ms"])}</td>'
                 f'<td>{esc(r["cache"] or "-")}</td><td>{ms(r["model_ttfb_ms"])} / {ms(r["model_total_ms"])}</td>'
                 f'<td>{esc(steps_text(r["steps"]))}</td>'
                 f'<td>{ms(r["end_to_end_ms"])}</td></tr>' for r in rs[:14])
@@ -460,7 +463,8 @@ class Ctx:
                 '<div class="card"><div class="head"><span class="t">Telemetry</span><span class="s">'
                 + ("stages from the gateway's Server-Timing header, times in ms" if server else
                    "client-side times in ms: this build sends no Server-Timing header")
-                + '</span></div><div class="cols"><div class="col"><h4>Requests</h4><table><tr><td class="k">request'
+                + '</span></div><div class="cols" style="grid-template-columns:1.9fr 1fr"><div class="col">'
+                '<h4>Requests</h4><table style="font-size:13px"><tr><td class="k">request'
                 '</td><td>intent</td><td>route</td><td>classify</td><td>PII</td><td>cache</td><td>model TTFB / total'
                 f'</td><td>node steps</td><td>end to end</td></tr>{body}</table></div><div class="col">'
                 f'<h4>p50 and p95 per stage</h4><table><tr><td class="k">stage</td><td>n</td><td>p50</td><td>p95</td>'
@@ -469,6 +473,7 @@ class Ctx:
                    '</table>' if evt else "") + '</div></div></div>')
             self.caption("Telemetry", "Where the time goes, per request and per stage: classification, PII, cache, "
                          "the model and each node step.", stage="Log", hold=9)
+            self.screenshot(f"{self._n:02d}-telemetry-panel")
             self.hide_panel()
 
     # Sign-in (recorded, done by the runner before the first chapter).
@@ -522,7 +527,10 @@ def record(pw, name, headed=False, only=None):
     browser = pw.chromium.launch(headless=not headed, slow_mo=SLOWMO)
     ctx_pw = browser.new_context(
         viewport={"width": round(WIDTH / SCALE), "height": round(HEIGHT / SCALE)}, device_scale_factor=SCALE,
-        record_video_dir=os.path.join(OUT, "video"), record_video_size={"width": WIDTH, "height": HEIGHT},
+        # The screencast is in CSS pixels: the raw video is the viewport's size (1536x864 at the
+        # default DEMO_SCALE 1.25, larger text) and the stitch scales it to 1920x1080.
+        record_video_dir=os.path.join(OUT, "video"),
+        record_video_size={"width": round(WIDTH / SCALE), "height": round(HEIGHT / SCALE)},
         locale="en-GB", color_scheme="light")
     ctx_pw.add_init_script(overlay)
     expect.set_options(timeout=int(os.environ.get("DEMO_EXPECT_TIMEOUT_MS", "30000")))
