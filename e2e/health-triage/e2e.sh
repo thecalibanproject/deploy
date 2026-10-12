@@ -8,6 +8,7 @@
 #   e2e/health-triage/e2e.sh all      # up, setup, run
 #   e2e/health-triage/e2e.sh down     # remove what `up` created (containers, volumes, work dir)
 #   e2e/health-triage/e2e.sh status | logs [service]
+#   e2e/health-triage/e2e.sh exec COMMAND...   # COMMAND with the e2e's environment (the demo runner)
 #
 # E2E_TARGET=local (default): its own compose project `caliban-e2e` from compose/docker-compose.yml,
 #   the scripted model, no GPU. Secrets are generated into the work directory.
@@ -288,6 +289,7 @@ case "$cmd" in
   down) down ;;
   status) secrets; dc ps ;;
   logs) secrets; dc logs --no-color --tail "${TAIL:-200}" "$@" ;;
-  ""|-h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) die "unknown command '$cmd' (up | setup | run | all | down | status | logs)" ;;
+  exec) [[ $# -gt 0 ]] || die "exec needs a command"; secrets; export E2E_DEPLOY_DIR="$DEPLOY_DIR"; exec "$@" ;;
+  ""|-h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$cmd' (up | setup | run | all | down | status | logs | exec)" ;;
 esac
