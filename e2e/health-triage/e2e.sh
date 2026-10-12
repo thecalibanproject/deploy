@@ -60,8 +60,8 @@ case "$E2E_TARGET" in
     : "${E2E_EXPECT_NER:=0}"
     # RAG stage: the stack's reranker (vLLM on the GPU host, port 8002 in the testbed config).
     : "${E2E_RAG_RERANK_MODEL:=local/qwen3-reranker-0.6b}"
-    # Qwen3.8 thinks before every answer (core sends node calls no reasoning setting): allow
-    # minutes, not seconds, for an eval trial and for the golden bar's p95.
+    # The node's model calls run with thinking off (E2E_ASSESS_REASONING, E2E_RECOMMEND_REASONING);
+    # the golden bar's p95 and the eval timeout keep room for a run with thinking on.
     : "${E2E_MAX_P95_MS:=300000}"
     : "${E2E_EVAL_TIMEOUT_S:=3600}"
     ;;
@@ -88,6 +88,10 @@ export E2E_RAG E2E_RAG_COLLECTION E2E_RAG_EMBED_MODEL E2E_RAG_RERANK_MODEL
 export E2E_DIR E2E_WORK_DIR E2E_TARGET E2E_PROJECT E2E_UPSTREAM_MODEL E2E_MODEL_FAMILY E2E_MODEL_UPSTREAM_URL \
   E2E_CHAT_MODEL_ID E2E_CHAT_BASE_URL E2E_CHAT_TRUST_TIER E2E_PRICE_IN_PER_MTOK E2E_PRICE_OUT_PER_MTOK \
   E2E_TENANT E2E_PII_MODE E2E_PII_ON_SOVEREIGN E2E_EXPECT_NER E2E_ROUTING_EMBED_MODEL
+# Reasoning effort of the triage node's two model vertices: off, low, medium or high.
+: "${E2E_ASSESS_REASONING:=off}"
+: "${E2E_RECOMMEND_REASONING:=off}"
+export E2E_ASSESS_REASONING E2E_RECOMMEND_REASONING
 [[ -n "${E2E_MAX_P95_MS:-}" ]] && export E2E_MAX_P95_MS
 [[ -n "${E2E_EVAL_TIMEOUT_S:-}" ]] && export E2E_EVAL_TIMEOUT_S
 

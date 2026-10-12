@@ -22,12 +22,12 @@
       }
     }
   },
-  "model_policy": { "model": "__CHAT_MODEL__", "intent_classes": ["reasoning"] },
+  "model_policy": { "model": "__CHAT_MODEL__", "intent_classes": ["reasoning"], "reasoning": "off" },
   "tools": [
     { "ref": "builtin://rag_search", "effect": "read" }
   ],
   "datasources": { "scopes": ["rag.__RAG_COLLECTION__:read"] },
-  "guardrails": { "pii": "mask" },
+  "guardrails": { "pii": "mask", "answer": "redact" },
   "agent": { "max_turns": 4 },
   "budgets": { "steps": 8, "tokens": 60000, "wall_clock_s": 900, "usd": 0.2, "depth": 1, "fanout": 1 },
   "exposure": { "http": true }

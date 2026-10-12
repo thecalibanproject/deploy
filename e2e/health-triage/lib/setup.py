@@ -193,6 +193,15 @@ def render_spec(st):
     with open(os.path.join(HERE, "node", "triage.node.json"), encoding="utf-8") as f:
         text = f.read()
     text = text.replace("__ONTOLOGY_VERSION__", st["ontology_version"]).replace("__CHAT_MODEL__", CHAT_ID)
+    # Reasoning effort per model vertex (core docs/nodes.md, "Reasoning and constrained decoding";
+    # research note 02, "When to Reason"): classifying the case and picking from returned rows need
+    # no thinking, and a thinking Qwen3.8 call takes tens of seconds. The gateway maps it per family
+    # (Qwen3: chat_template_kwargs.enable_thinking).
+    for vertex in ("assess", "recommend"):
+        effort = os.environ.get(f"E2E_{vertex.upper()}_REASONING", "off")
+        if effort not in ("off", "low", "medium", "high"):
+            sys.exit(f"E2E_{vertex.upper()}_REASONING must be off, low, medium or high (got {effort!r})")
+        text = text.replace(f"__{vertex.upper()}_REASONING__", effort)
     spec = json.loads(text)
     # The recommend vertex answers with the node's output schema (one corrective retry on a miss);
     # copied here so the two never drift apart.

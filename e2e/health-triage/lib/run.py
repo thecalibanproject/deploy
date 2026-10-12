@@ -168,6 +168,26 @@ def profiled_queries(run_id):
     return analytics, primary
 
 
+def shaping_checks(rid, calls, checks):
+    """The node's model calls ask for constrained decoding (response_format json_schema from the
+    vertex's output_schema) and carry the vertex's reasoning effort, which the gateway maps for a
+    Qwen3 model to chat_template_kwargs.enable_thinking (core docs/nodes.md)."""
+    node_calls = [(c, v) for c in calls for v in ("assess", "recommend") if f"[triage:{v}]" in text_of_request(c)]
+    if not node_calls:
+        checks.add("flow", f"{rid} node calls ask for constrained decoding", "INFO",
+                   "no model call reached the model (exact cache)")
+        return
+    shaped = [v for c, v in node_calls if c.get("response_format") == "json_schema"]
+    checks.add("flow", f"{rid} node calls ask for constrained decoding (response_format json_schema)",
+               len(shaped) == len(node_calls), f"{len(shaped)} of {len(node_calls)}")
+    if (os.environ.get("E2E_MODEL_FAMILY") or "").startswith("qwen3"):
+        bad = [v for c, v in node_calls
+               if ((c.get("chat_template_kwargs") or {}).get("enable_thinking")
+                   != (os.environ.get(f"E2E_{v.upper()}_REASONING", "off") != "off"))]
+        checks.add("flow", f"{rid} node calls carry the vertex's reasoning setting (enable_thinking)", not bad,
+                   ", ".join(bad) or "as set")
+
+
 def parse_answer(content):
     try:
         return json.loads(content)
@@ -304,6 +324,7 @@ def run_one(st, spec, checks, timeout):
     # reached it on any earlier run either.
     calls, _ = model_log_since(off)
     rec["model_calls"] = len(calls)
+    shaping_checks(spec["id"], calls, checks)
     every_call, _ = model_log_since(0)
     seen = "\n".join(text_of_request(c) for c in every_call)
     pii_results = []

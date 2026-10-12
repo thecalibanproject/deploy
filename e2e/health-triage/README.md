@@ -190,6 +190,18 @@ step, loops back to `assess` once, `max_iterations: 2`) → `services`, `facilit
 output schema; the message may not contain an e-mail address). The CQIR names the ontology
 version, which setup fills in after the review.
 
+Both model vertices ask for constrained decoding (`structured_output: json_schema`: the vertex's
+output schema goes as `response_format`, vLLM's guided decoding on the testbed) and run with
+thinking off (`model_policy.reasoning: off`; `E2E_ASSESS_REASONING` and `E2E_RECOMMEND_REASONING`
+set each vertex's `reasoning`): classifying a case and picking from returned rows need no long
+reasoning (research note 02, "When to Reason"). The run checks the model received both. The
+answer guard is on (`guardrails.answer: redact`, core's default, set explicitly): a link, an
+e-mail address or a phone number that appears only inside untrusted free text (a catalogue
+description) cannot reach the patient, and neither can a sentence that echoes an injected
+instruction. Contacts the answer may quote belong in their own fields of the data (a row's
+`phone`), never inside a description: the guard keeps a whole field value and removes what it
+lifts from free text. The seed has no contact in a description but the hostile row's.
+
 ## PII
 
 The chat model is on-prem, so the e2e registers it `t0_sovereign`, like every model of

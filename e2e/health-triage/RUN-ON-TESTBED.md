@@ -52,11 +52,12 @@ What `E2E_TARGET=testbed` sets (override any of them in the environment):
 | Config | `/opt/caliban-testbed/caliban.toml` plus the e2e `[routing]` table (Qwen3-Embedding instruction prefix and thresholds from core's `open-models.example.toml`); the tenant's `triage` exemplars are set by `setup` through the admin API |
 | Chat model | `e2e/chat` = `Qwen/Qwen3.8-27B-FP8`, family `qwen3.8`, through the recorder (`caliban-e2e-model`) to `http://$GPU_IP:8000/v1`, registered `t0_sovereign`; the node's `guardrails.pii: mask` masks identifiers on its calls |
 | Routing embedder | `local/qwen3-embedding-0.6b` (the stack's TEI on the GPU host) |
-| Evals | golden p95 bar 300 s, eval timeout 1 h: Qwen3.8 thinks before every node call, core sends no reasoning setting with them |
+| Node calls | thinking off on `assess` and `recommend` (`E2E_ASSESS_REASONING`, `E2E_RECOMMEND_REASONING`: `off`, `low`, `medium`, `high`; the gateway sends Qwen3.8 `chat_template_kwargs.enable_thinking`), JSON outputs with `response_format: json_schema` (vLLM guided decoding) |
+| Evals | golden p95 bar 300 s, eval timeout 1 h: room for a run with thinking on |
 | RAG stage (`E2E_RAG=1`) | collection `care_docs` embedded with `local/qwen3-embedding-0.6b` and reranked with `local/qwen3-reranker-0.6b` (the GPU host's TEI on 8001 and vLLM on 8002), vectors in the gateway's Qdrant |
 
-Expect each triage request to take tens of seconds (two or three thinking calls); `CALIBAN_NODE_SYNC_WAIT_SECS`
-is 180 in the e2e, and the run script follows a run that outlives it. The scripted human answers
+Expect each triage request to take seconds with thinking off, tens of seconds with it on (two or
+three model calls); `CALIBAN_NODE_SYNC_WAIT_SECS` is 180 in the e2e, and the run script follows a run that outlives it. The scripted human answers
 and the fallback answers cover a real model that asks a question where the scripted one does not;
 quality checks (specialty, city, facility) are reported, and fail the run only with
 `E2E_STRICT_QUALITY=1`.
@@ -85,8 +86,9 @@ Indexing goes through the real embedder: eight short documents take seconds, not
 real model the agent may phrase its search differently and pick other passages: the `rag` checks
 (retrieval, quarantine, taint, grounded citations, metering) must hold whatever it does; the
 `quality` checks (best passage, `[n]` markers, language, the expected fact) are reported and fail
-the run only with `E2E_STRICT_QUALITY=1`. Qwen3.8 answers the node's JSON output by prompting plus
-one corrective retry (core sends no constrained decoding with node calls, gap 7 in the README).
+the run only with `E2E_STRICT_QUALITY=1`. The `careguide` agent's JSON answer still relies on
+prompting plus one corrective retry: core's constrained decoding covers the model vertices of
+workflows, not an agent's final answer (README, "Gaps in core").
 
 With `gateway_run_worker=true` the worker on the gateway indexes too, as the gateway's own database
 user: the worker grants of the chart README (`rag_collection`, `rag_document`) are not exercised

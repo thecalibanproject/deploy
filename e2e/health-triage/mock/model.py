@@ -330,9 +330,15 @@ def scripted(body):
 
 
 def record(path, body):
+    rf = body.get("response_format") if isinstance(body.get("response_format"), dict) else {}
+    schema = rf.get("json_schema") if isinstance(rf.get("json_schema"), dict) else {}
     entry = {"ts": time.time(), "path": path, "model": body.get("model"), "messages": body.get("messages"),
              "tools": bool(body.get("tools")), "stream": bool(body.get("stream")),
-             "keys": sorted(body.keys())}
+             "keys": sorted(body.keys()),
+             # How the gateway shaped the call: constrained decoding and the reasoning switch.
+             "response_format": rf.get("type"), "response_schema": schema.get("name"),
+             "chat_template_kwargs": body.get("chat_template_kwargs"),
+             "reasoning_effort": body.get("reasoning_effort")}
     with LOCK, open(LOG, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
