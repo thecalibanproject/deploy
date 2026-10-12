@@ -198,6 +198,9 @@ GRANT USAGE ON SCHEMA public TO caliban_worker;  -- the schema holding Caliban's
 GRANT SELECT ON caliban_schema_migrations TO caliban_worker;
 GRANT SELECT, INSERT, UPDATE, DELETE ON node_run, node_step, node_event, node_run_event, node_audit TO caliban_worker;
 GRANT SELECT, INSERT, UPDATE ON node_spend TO caliban_worker;
+GRANT SELECT, UPDATE ON node_eval TO caliban_worker;                     -- evals (0024): claims, results
+GRANT SELECT, INSERT, UPDATE ON node_eval_trial TO caliban_worker;
+GRANT SELECT, UPDATE ON rag_collection, rag_document TO caliban_worker;  -- retrieval (0029): indexing, purges
 ALTER ROLE caliban_worker BYPASSRLS;
 ```
 
@@ -207,10 +210,15 @@ ALTER ROLE caliban_worker BYPASSRLS;
 - **`DELETE`** is for the retention purge of finished runs (`nodes.runRetentionDays`), which
   removes their steps and events with them. **`node_spend`** holds each tenant's spend per day,
   checked against the tenant's node spend caps.
+- **`node_eval`, `node_eval_trial`**: workers claim eval runs and record their trials.
+  **`rag_collection`, `rag_document`**: workers index retrieval documents (claims under a lease,
+  the indexing state, quarantine) and purge deleted ones; they never insert or delete registry
+  rows (core [`docs/rag.md`](https://github.com/thecalibanproject/core/blob/main/docs/rag.md),
+  "Deployment").
 - No sequence grants: `node_step.seq` is an identity column. Workers write nothing else (usage
   goes to the control plane over HTTP).
 - Run the grants after the control plane has created the tables, and again after an upgrade that
-  adds node tables (core [`docs/nodes.md`](https://github.com/thecalibanproject/core/blob/main/docs/nodes.md)
+  adds node or retrieval tables (core [`docs/nodes.md`](https://github.com/thecalibanproject/core/blob/main/docs/nodes.md)
   lists them).
 
 **Upgrade order.** Control plane first (migrations), then routers, then workers. One
