@@ -155,8 +155,9 @@ of `compose/config/caliban.toml`) and Qdrant 1.19.2 or later (the stack's defaul
 3. Wait until the standalone process has indexed every document (pseudonymised, embedded through
    the gateway, written to Qdrant): the trusted ones `ready`, the untrusted one `quarantined`.
 4. Node `careguide` (`node/careguide.node.json`): an agent with `builtin://rag_search` and the
-   scope `rag.care_docs:read`, published and promoted, and an API key that may run only
-   `careguide`, narrowed to `rag.care_docs:read` (`datasource_scopes`).
+   scope `rag.care_docs:read`, published, its injection eval run (core's gate: a version with read
+   tools needs one), then promoted, and an API key that may run only `careguide`, narrowed to
+   `rag.care_docs:read` (`datasource_scopes`).
 
 **Run**: the documents' states, then four questions through `POST /v1/nodes/careguide/runs` with
 that key (the triage requests are unchanged; `run G1` runs one of them):
