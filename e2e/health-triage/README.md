@@ -25,6 +25,8 @@ e2e/health-triage/
 ├── rag/                     the RAG stage's documents (en, fr, ar), requests and expectations
 ├── mock/model.py            scripted OpenAI-compatible model, or a recorder in front of a real one
 ├── lib/                     setup.py and run.py (Python 3.9+, stdlib only), common.py, rag.py
+├── demo/scenario.py         the recorded console walkthrough (e2e/demo, RUN-ON-TESTBED.md 3b)
+├── check.py                 the demo's check: lib/run.py
 └── RUN-ON-TESTBED.md        the same test on the AWS testbed's L40S with Qwen3.8-27B
 ```
 
@@ -42,6 +44,7 @@ e2e/health-triage/e2e.sh run          # again: repeated prompts hit the exact ca
 e2e/health-triage/e2e.sh run R5 R6    # only some requests
 E2E_RAG=1 e2e/health-triage/e2e.sh all  # with the optional RAG stage (below)
 e2e/health-triage/e2e.sh down         # containers, volumes and the work directory
+e2e/health-triage/e2e.sh exec CMD...  # CMD with the e2e's environment (the demo runner uses it)
 ```
 
 `up` starts its own compose project, `caliban-e2e`, from `compose/docker-compose.yml` plus the
@@ -54,6 +57,7 @@ the raw results as JSON).
 | Variable | Default (local) | Meaning |
 |---|---|---|
 | `E2E_TARGET` | `local` | `testbed` switches every default below (RUN-ON-TESTBED.md) |
+| `E2E_EXTRA_COMPOSE` | empty (testbed: the gateway's overlay) | Compose overlays between the stack's file and the e2e's, separated by colons or spaces: append a scenario's overlay to the testbed's |
 | `E2E_UPSTREAM_MODEL`, `E2E_MODEL_FAMILY` | `e2e-scripted` | The model name the server answers to, its catalogue family |
 | `E2E_MODEL_UPSTREAM_URL` | empty | Set: the e2e model becomes a recorder that forwards to this OpenAI-compatible base URL (`http://gpu:8000/v1`) |
 | `E2E_CHAT_TRUST_TIER` | `t0_sovereign` | Trust tier the chat model is registered with (see PII below) |

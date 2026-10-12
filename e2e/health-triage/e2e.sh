@@ -96,8 +96,11 @@ export E2E_ASSESS_REASONING E2E_RECOMMEND_REASONING
 [[ -n "${E2E_MAX_P95_MS:-}" ]] && export E2E_MAX_P95_MS
 [[ -n "${E2E_EVAL_TIMEOUT_S:-}" ]] && export E2E_EVAL_TIMEOUT_S
 
-FILES=(-f "$DEPLOY_DIR/compose/docker-compose.yml")
-[[ -n "$E2E_EXTRA_COMPOSE" ]] && FILES+=(-f "$E2E_EXTRA_COMPOSE")
+# E2E_EXTRA_COMPOSE: overlays between the stack's file and the e2e's, separated by colons or spaces
+# (the testbed gateway's file, then any scenario overlays).
+EXTRA_FILES=()
+for f in ${E2E_EXTRA_COMPOSE//:/ }; do EXTRA_FILES+=(-f "$f"); done
+FILES=(-f "$DEPLOY_DIR/compose/docker-compose.yml" "${EXTRA_FILES[@]}")
 FILES+=(-f "$E2E_DIR/docker-compose.e2e.yml")
 E2E_SERVICES=(caliban-e2e-mongo caliban-e2e-mongo-analytics caliban-e2e-model)
 
@@ -272,8 +275,7 @@ down() {
     dc rm -s -f -v "${E2E_SERVICES[@]}"
     docker volume rm caliban-e2e-mongo-data caliban-e2e-mongo-analytics-data 2>/dev/null || true
     docker network rm caliban-e2e-out 2>/dev/null || true
-    local base=(-f "$DEPLOY_DIR/compose/docker-compose.yml")
-    [[ -n "$E2E_EXTRA_COMPOSE" ]] && base+=(-f "$E2E_EXTRA_COMPOSE")
+    local base=(-f "$DEPLOY_DIR/compose/docker-compose.yml" "${EXTRA_FILES[@]}")
     docker compose -p "$E2E_PROJECT" --env-file "$E2E_STACK_ENV" "${base[@]}" up -d --wait caliban
   fi
   rm -rf "$E2E_WORK_DIR"
