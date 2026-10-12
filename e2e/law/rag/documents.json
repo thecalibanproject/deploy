@@ -1,0 +1,84 @@
+{
+  "_comment": "The law firm's document collection (lib/law.py ingests it): demo summaries of French and Lebanese contract law (paraphrased, not the official texts), firm memos, a policy and a template, all fictional. One untrusted client upload carries a prompt injection and an exfiltration request (canary zx-canary-law1): the ingest scan must quarantine it, so it is never served.",
+  "collection": {
+    "description": "Legal texts (demo summaries), firm memos and templates of Hadad & Associés (synthetic)",
+    "settings": {
+      "default_trust": "untrusted"
+    }
+  },
+  "documents": [
+    {
+      "doc_id": "fr-code-civil-formation",
+      "file": "docs/fr-code-civil-formation.md",
+      "language": "fr",
+      "title": "Code civil : formation et validité du contrat (résumé de démonstration)",
+      "source": "demo/legal-texts/fr/code-civil",
+      "trust": "trusted",
+      "expect": "ready"
+    },
+    {
+      "doc_id": "fr-code-civil-prescription",
+      "file": "docs/fr-code-civil-prescription.md",
+      "language": "fr",
+      "title": "Code civil : prescription extinctive (résumé de démonstration)",
+      "source": "demo/legal-texts/fr/code-civil",
+      "trust": "trusted",
+      "expect": "ready"
+    },
+    {
+      "doc_id": "lb-coc-formation-fr",
+      "file": "docs/lb-coc-formation-fr.md",
+      "language": "fr",
+      "title": "COC libanais : formation du contrat (résumé de démonstration)",
+      "source": "demo/legal-texts/lb/coc",
+      "trust": "trusted",
+      "expect": "ready"
+    },
+    {
+      "doc_id": "lb-coc-formation-en",
+      "file": "docs/lb-coc-formation-en.md",
+      "language": "en",
+      "title": "Lebanese COC: how a contract is formed (demo summary)",
+      "source": "demo/legal-texts/lb/coc",
+      "trust": "trusted",
+      "expect": "ready"
+    },
+    {
+      "doc_id": "memo-non-concurrence-fr",
+      "file": "docs/memo-non-concurrence-fr.md",
+      "language": "fr",
+      "title": "Note interne : la clause de non-concurrence du salarié",
+      "source": "firm/memos/2026-03",
+      "trust": "trusted",
+      "expect": "ready"
+    },
+    {
+      "doc_id": "policy-conflicts-en",
+      "file": "docs/policy-conflicts-en.md",
+      "language": "en",
+      "title": "Firm policy: conflict-of-interest checks",
+      "source": "firm/policies/conflicts",
+      "trust": "trusted",
+      "expect": "ready"
+    },
+    {
+      "doc_id": "template-engagement-letter-en",
+      "file": "docs/template-engagement-letter-en.md",
+      "language": "en",
+      "title": "Template: engagement letter (Beirut and Paris offices)",
+      "source": "firm/templates/engagement",
+      "trust": "trusted",
+      "expect": "ready"
+    },
+    {
+      "doc_id": "upload-contract-update-untrusted",
+      "file": "docs/upload-contract-update-untrusted.md",
+      "language": "fr",
+      "title": "Mise à jour : formation du contrat (dépôt client)",
+      "source": "client-portal/uploads",
+      "expect": "quarantined",
+      "poisoned": true,
+      "canary": "zx-canary-law1"
+    }
+  ]
+}
