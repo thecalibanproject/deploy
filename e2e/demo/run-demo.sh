@@ -81,12 +81,13 @@ pull() {
   done
   # The image carries Chromium (/ms-playwright) but, in its current builds, not the Python package:
   # install the matching playwright release once into DEMO_PYLIB, which pyrun puts on PYTHONPATH.
-  if ! docker run --rm "$DEMO_PLAYWRIGHT_IMAGE" python3 -c 'import playwright' 2>/dev/null; then
+  if [[ ! -d "$DEMO_PYLIB/playwright" ]] \
+    && ! docker run --rm "$DEMO_PLAYWRIGHT_IMAGE" python3 -c 'import playwright' 2>/dev/null; then
     local version="${DEMO_PLAYWRIGHT_IMAGE##*:v}"; version="${version%%-*}"
     log "installing playwright==$version into $DEMO_PYLIB"
     mkdir -p "$DEMO_PYLIB"
     docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$DEMO_PYLIB:$DEMO_PYLIB" "$DEMO_PLAYWRIGHT_IMAGE" \
-      python3 -m pip install --quiet --disable-pip-version-check --target "$DEMO_PYLIB" "playwright==$version"
+      python3 -m pip install --quiet --disable-pip-version-check --root-user-action=ignore --target "$DEMO_PYLIB" "playwright==$version"
   fi
 }
 
