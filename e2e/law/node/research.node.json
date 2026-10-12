@@ -55,7 +55,7 @@
         "type": "tool",
         "config": {
           "tool": "builtin://rag_search",
-          "args": { "query": "{{outputs.intake.question}}", "k": 5, "max_tokens": 2400 }
+          "args": { "query": "{{outputs.intake.question}}", "k": 8, "max_tokens": 3200 }
         }
       },
       {

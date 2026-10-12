@@ -50,7 +50,7 @@ e2e/law/
   `practice.time_entries` (read). The deadlines and status queries join each matter's client through
   the verified reference `rel.matter_client` (`$lookup`); billing joins time entries to matters.
 - **research** (workflow): `intake` → `search` (`builtin://rag_search`, `rag.legal_texts:read`, the
-  question as the query, k 5) → `answer` (llm, cites passages as `[n]`, constrained decoding). A
+  question as the query, k 8) → `answer` (llm, cites passages as `[n]`, constrained decoding). A
   workflow rather than an agent: the retrieval always runs, and the answer is constrained (agent
   final answers are prompted only, see the health README's open gap 3).
 

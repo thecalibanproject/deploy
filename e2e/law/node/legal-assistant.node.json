@@ -55,8 +55,8 @@
           "structured_output": "json_schema",
           "routes": {
             "matter_desk": "A question about the firm's own matters or clients: status, deadlines, hearings, billing, hours, or a forwarded client e-mail to summarise against the file",
-            "conflict_check": "A conflict-of-interest check before taking on a new client or a new matter against someone",
-            "research": "A question of law: statutes, codes, doctrine, the firm's memos and templates, with sources"
+            "conflict_check": "A conflict-of-interest check on named parties before taking on a new client or a new matter against someone",
+            "research": "A question of law or of the firm's rules: statutes, codes, doctrine, the firm's memos, templates and internal policies (such as what the policy counts as a conflict of interest), with sources"
           }
         }
       },
