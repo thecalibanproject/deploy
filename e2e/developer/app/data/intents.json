@@ -1,0 +1,73 @@
+{
+  "_comment": "The support app's caliban/auto intents, first draft: exemplars in English, French and Arabic. Sales only knows demos and the Enterprise plan so far.",
+  "intents": {
+    "billing": [
+      "I was charged twice this month",
+      "why is my invoice higher than last month",
+      "I need a refund for my annual subscription",
+      "update the credit card on my subscription",
+      "please add our VAT number to the invoice",
+      "we removed seats but were still charged for them",
+      "j'ai été prélevé deux fois ce mois-ci",
+      "où trouver ma facture du mois dernier",
+      "je voudrais un remboursement de mon abonnement",
+      "تم خصم المبلغ مرتين من بطاقتي",
+      "أريد استرداد قيمة الاشتراك",
+      "أين أجد فاتورة الشهر الماضي",
+      "the Pro plan was charged twice on my card this month",
+      "can you send me the invoice with our VAT number",
+      "pouvez-vous m'envoyer une facture avec le numéro de TVA",
+      "I was double charged on my card this month"
+    ],
+    "bug_report": [
+      "the app crashes when I click export",
+      "I get an error 500 when saving a board",
+      "the page stays blank after login",
+      "sync with the calendar integration is broken",
+      "the editor freezes when I paste an image",
+      "l'application plante quand j'ouvre un tableau",
+      "j'ai une erreur quand j'enregistre un rapport",
+      "la synchronisation ne fonctionne plus",
+      "يتعطل التطبيق عند الضغط على زر التصدير",
+      "تظهر رسالة خطأ عند حفظ اللوحة",
+      "المزامنة لا تعمل منذ أمس",
+      "the export button crashes every time I click it"
+    ],
+    "how_to": [
+      "how do I export a report to CSV",
+      "how do I set up single sign-on",
+      "how can I invite a teammate to my workspace",
+      "where do I change the roles of members",
+      "how to schedule a weekly report",
+      "comment exporter un rapport en PDF",
+      "comment inviter un collègue dans l'espace de travail",
+      "comment configurer l'authentification unique",
+      "كيف أصدر تقريرًا بصيغة CSV",
+      "كيف أدعو زميلًا إلى مساحة العمل",
+      "كيف أغيّر صلاحيات الأعضاء"
+    ],
+    "account_security": [
+      "someone else logged into my account",
+      "I got a password reset email I did not ask for",
+      "my account was hacked",
+      "I lost my phone with the two-factor authentication app",
+      "quelqu'un s'est connecté à mon compte",
+      "mon compte a été piraté",
+      "j'ai perdu mon téléphone avec la double authentification",
+      "شخص آخر سجّل الدخول إلى حسابي",
+      "تم اختراق حسابي",
+      "وصلني رمز تحقق لم أطلبه",
+      "someone reset my password and it was not me",
+      "a password reset happened last night that I did not do"
+    ],
+    "sales": [
+      "I would like a demo of the product",
+      "what does the Enterprise plan include",
+      "can I talk to someone in sales",
+      "je voudrais une démonstration du produit",
+      "que comprend l'offre Enterprise",
+      "أريد عرضًا توضيحيًا للمنتج",
+      "ماذا تتضمن خطة المؤسسات"
+    ]
+  }
+}
