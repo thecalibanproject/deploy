@@ -115,6 +115,20 @@ def publish(adm, st):
 # ─────────────────────────── evals ───────────────────────────
 
 
+def wait_eval(adm, eid):
+    """adm.evals.wait, polling the raw JSON: the SDK's Eval model rejects an eval whose trials are
+    still in flight (their verdict is not one of the SDK's verdict shapes yet), so only the ended
+    eval is parsed."""
+    deadline = time.monotonic() + EVAL_TIMEOUT_S
+    while True:
+        body = raw(adm, "GET", f"/api/v1/tenants/{TENANT}/evals/{eid}")
+        if body.get("status") in ("succeeded", "failed", "cancelled"):
+            return adm.evals.get(TENANT, eid)
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"eval {eid} still {body.get('status')} after {EVAL_TIMEOUT_S:g}s")
+        time.sleep(3)
+
+
 def evals(adm, st):
     v = st["versions"]
     started = []
@@ -137,7 +151,7 @@ def evals(adm, st):
     print(f"started {len(started)} evals: " + ", ".join(f"{n} {s}" for n, _, s, _ in started), flush=True)
     rows, out = [], {}
     for name, ver, suite, eid in started:
-        e = adm.evals.wait(TENANT, eid, poll_s=3, timeout_s=EVAL_TIMEOUT_S)
+        e = wait_eval(adm, eid)
         s = e.summary if isinstance(e.summary, dict) else (e.summary.model_dump() if e.summary else {})
         out.setdefault(name, {})[suite] = {"id": e.id, "status": e.status, "summary": s}
         if suite == "golden":
