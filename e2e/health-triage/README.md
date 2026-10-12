@@ -179,7 +179,9 @@ Checks, of kind `rag` (they fail the run like flow checks):
   never reaches the model (its whole request log) or the answer;
 - the model read the cited passages (the first passage's chunk id is in its request log);
 - the answer's citations are passages the search returned (same `n`, same `doc_id`);
-- the query embedding (and the rerank, with a reranker) is metered as the run's;
+- the query embedding (and the rerank, with a reranker) is metered as the run's, with the usage
+  purpose `rag.search`, and the tenant's usage totals retrieval apart in `by_purpose` (`rag.ingest`
+  for indexing, `rag.search`);
 - the retrieval writes are in the audit log (`rag.document.ingest`).
 
 Answer quality (kind `quality`, a failure only with `E2E_STRICT_QUALITY=1`): the expected document

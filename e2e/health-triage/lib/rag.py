@@ -319,6 +319,12 @@ def run_one(rag, spec, m, checks, timeout, prompt_tag, model_log):
     info(f"metering: {json.dumps(rec['usage'])}")
     checks.add("rag", f"{spec['id']} the query embedding is metered as the run's", rag.get("embedding_model") in models,
                ", ".join(models))
+    # Retrieval's own calls carry a usage purpose (core docs/rag.md, "Metering"): rag.search for the
+    # query embedding and rerank, so retrieval spend is separable from the node's model calls.
+    retrieval = [e for e in ev if e.get("model") in (rag.get("embedding_model"), rag.get("rerank_model"))]
+    checks.add("rag", f"{spec['id']} the search's calls are labelled rag.search",
+               bool(retrieval) and all(e.get("purpose") == "rag.search" for e in retrieval),
+               ", ".join(sorted({str(e.get("purpose")) for e in retrieval})) or "no retrieval event")
     if rag.get("rerank_model"):
         checks.add("rag", f"{spec['id']} the rerank is metered as the run's", rag["rerank_model"] in models, ", ".join(models))
     return rec
@@ -344,6 +350,11 @@ def run(st, checks, timeout, only, prompt_tag, model_log):
         except (HttpError, TimeoutError, RuntimeError) as e:
             checks.add("rag", f"{spec['id']} completed", False, str(e)[:300])
             results.append({"id": spec["id"], "title": spec["title"], "prompt": spec["text"], "error": str(e)})
+    u = cp("GET", f"/api/v1/usage?tenant_id={TENANT}&limit=1").body
+    purposes = {g.get("purpose"): (g.get("totals") or {}).get("requests") for g in u.get("by_purpose") or []}
+    checks.add("rag", "usage totals retrieval by purpose (rag.ingest, rag.search)",
+               bool(purposes.get("rag.ingest")) and (bool(purposes.get("rag.search")) or not results),
+               json.dumps(purposes))
     a = cp("GET", "/api/v1/audit?limit=500").body
     actions = sorted({e.get("action") for e in a.get("entries") or [] if str(e.get("action", "")).startswith("rag.")})
     checks.add("rag", "retrieval writes are in the audit log",
@@ -351,7 +362,7 @@ def run(st, checks, timeout, only, prompt_tag, model_log):
                ", ".join(actions) or "none among the newest 500 entries")
     return results, {"collection": rag.get("collection"), "embedding_model": rag.get("embedding_model"),
                      "rerank_model": rag.get("rerank_model"), "node_version": rag.get("node_version"),
-                     "documents": docs}
+                     "documents": docs, "by_purpose": purposes}
 
 
 def report_lines(summary, results):
