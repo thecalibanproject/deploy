@@ -39,22 +39,23 @@ PROMPT_TAG = os.environ.get("E2E_PROMPT_TAG", "")
 MODEL_LOG = os.path.join(WORK, "model-log", "requests.jsonl")
 TERMINAL = {"succeeded", "failed", "budget_exhausted", "cancelled"}
 
-# Synthetic identifiers (invented; they belong to nobody). `masked`: what L0 detection in core
-# catches (international phone numbers, e-mail addresses); names need the NER tier; the ID formats
-# and French national-format phone numbers have no detector in core (README.md, "Gaps in core").
+# Synthetic identifiers (invented; they belong to nobody). Detector: `l0` (core's built-in
+# patterns: phones of the reference market, e-mail addresses, the French NIR with its key),
+# `tenant` (the tenant's own pattern, lib/setup.py PII_PATTERNS), `ner` (names need the NER tier).
+# An `l0` or `tenant` identifier that reaches the model in clear fails the run; a name does only
+# with E2E_EXPECT_NER=1.
 PII = {
-    # id: (value, what, detector in this build, why it may reach the model)
+    # id: (value, what, detector, why it may reach the model)
     "name_en": ("Karim Haddad-Nassar", "person name", "ner", "names need the NER tier"),
-    "id_en": ("LB-4471-9902-3", "national ID number", "none", "core has no pattern for this ID format"),
+    "id_en": ("LB-4471-9902-3", "national ID number (tenant pattern)", "tenant", ""),
     "phone_en": ("+961 71 234 567", "phone (international)", "l0", ""),
     "email_en": ("karim.hn@example.net", "e-mail", "l0", ""),
     "name_fr": ("Camille Roux-Benali", "person name", "ner", "names need the NER tier"),
-    "phone_fr": ("06 12 34 56 78", "phone (French national format)", "none",
-                 "the L0 phone patterns need a + prefix or the US format"),
-    "nir_fr": ("2 84 06 75 115 042 87", "French social security number", "none", "core has no NIR pattern"),
+    "phone_fr": ("06 12 34 56 78", "phone (French national format)", "l0", ""),
+    # A valid NIR: its key 63 is 97 - (2840675115042 mod 97).
+    "nir_fr": ("2 84 06 75 115 042 63", "French social security number (NIR)", "l0", ""),
     "name_ar": ("ليلى منصور", "person name (Arabic script)", "ner", "names need the NER tier"),
-    "phone_ar": ("+961 3 456 789", "phone (Lebanese mobile, one-digit prefix)", "none",
-                 "the L0 international pattern needs groups of 2 to 4 digits after the country code"),
+    "phone_ar": ("+961 3 456 789", "phone (Lebanese mobile, one-digit prefix)", "l0", ""),
 }
 
 REQUESTS = [
@@ -73,7 +74,7 @@ REQUESTS = [
     },
     {
         "id": "R3-fr", "title": "French triage (child, Tripoli) with PII",
-        "text": "Bonjour, je suis Camille Roux-Benali, numéro de sécurité sociale 2 84 06 75 115 042 87, "
+        "text": "Bonjour, je suis Camille Roux-Benali, numéro de sécurité sociale 2 84 06 75 115 042 63, "
                 "tél. 06 12 34 56 78. Mon fils de 4 ans a de la fièvre et tousse depuis deux jours. "
                 "Nous sommes à Tripoli.",
         "pii": ["name_fr", "nir_fr", "phone_fr"],
@@ -312,7 +313,7 @@ def run_one(st, spec, checks, timeout):
         if not leaked:
             res = "masked"
             checks.add("pii", f"{spec['id']} {label} never reached the model in clear", True, value)
-        elif tier == "l0" or (tier == "ner" and EXPECT_NER):
+        elif tier in ("l0", "tenant") or (tier == "ner" and EXPECT_NER):
             res = "LEAKED"
             checks.add("pii", f"{spec['id']} {label} never reached the model in clear", False, f"{value} seen by the model")
         else:
@@ -383,7 +384,7 @@ def run_one(st, spec, checks, timeout):
     checks.add("flow", f"{spec['id']} metered cost equals the run's cost",
                abs((tot.get("charged_usd") or 0) - (run.get("cost_usd") or 0)) < 1e-9,
                f"charged {tot.get('charged_usd')} vs run {run.get('cost_usd')}")
-    if any(PII[p][2] == "l0" for p in spec.get("pii", [])):
+    if any(PII[p][2] in ("l0", "tenant") for p in spec.get("pii", [])):
         checks.add("pii", f"{spec['id']} the gateway counted PII entities on the run's model calls",
                    rec["usage"]["pii_entities"] > 0, f"{rec['usage']['pii_entities']} entities")
     return rec

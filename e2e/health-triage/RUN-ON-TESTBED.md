@@ -50,7 +50,7 @@ What `E2E_TARGET=testbed` sets (override any of them in the environment):
 |---|---|
 | Compose | project `caliban`, `compose/docker-compose.yml` + `/opt/caliban-testbed/compose.testbed-gateway.yml` + the e2e overlay, env file `compose/.env` |
 | Config | `/opt/caliban-testbed/caliban.toml` plus the e2e `[routing]` table (Qwen3-Embedding instruction prefix and thresholds from core's `open-models.example.toml`) and the tenant's exemplars |
-| Chat model | `e2e/chat` = `Qwen/Qwen3.8-27B-FP8`, family `qwen3.8`, through the recorder (`caliban-e2e-model`) to `http://$GPU_IP:8000/v1`, registered `t2_contracted` so the gateway masks PII |
+| Chat model | `e2e/chat` = `Qwen/Qwen3.8-27B-FP8`, family `qwen3.8`, through the recorder (`caliban-e2e-model`) to `http://$GPU_IP:8000/v1`, registered `t0_sovereign`; the node's `guardrails.pii: mask` masks identifiers on its calls |
 | Routing embedder | `local/qwen3-embedding-0.6b` (the stack's TEI on the GPU host) |
 | Evals | golden p95 bar 300 s, eval timeout 1 h: Qwen3.8 thinks before every node call, core sends no reasoning setting with them |
 | RAG stage (`E2E_RAG=1`) | collection `care_docs` embedded with `local/qwen3-embedding-0.6b` and reranked with `local/qwen3-reranker-0.6b` (the GPU host's TEI on 8001 and vLLM on 8002), vectors in the gateway's Qdrant |

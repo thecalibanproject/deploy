@@ -55,8 +55,9 @@ the raw results as JSON).
 | `E2E_TARGET` | `local` | `testbed` switches every default below (RUN-ON-TESTBED.md) |
 | `E2E_UPSTREAM_MODEL`, `E2E_MODEL_FAMILY` | `e2e-scripted` | The model name the server answers to, its catalogue family |
 | `E2E_MODEL_UPSTREAM_URL` | empty | Set: the e2e model becomes a recorder that forwards to this OpenAI-compatible base URL (`http://gpu:8000/v1`) |
-| `E2E_CHAT_TRUST_TIER` | `t2_contracted` | Trust tier the chat model is registered with (see PII below) |
+| `E2E_CHAT_TRUST_TIER` | `t0_sovereign` | Trust tier the chat model is registered with (see PII below) |
 | `E2E_PII_MODE` | `mask` | The tenant's PII mode |
+| `E2E_PII_ON_SOVEREIGN` | `0` | `1`: the tenant's PII mode applies to its in-boundary models too (`pii_on_sovereign`), not only to the node's calls |
 | `E2E_ROUTING_EMBED_MODEL`, `E2E_ROUTING_PRESET` | `e2e/embed`, `mock` | Embedding model and kNN settings of `caliban/auto` |
 | `E2E_EXPECT_NER` | `0` | `1` when the image runs the NER tier (`CALIBAN_PII_NER_DIR`): names then must be masked |
 | `E2E_FOLLOW_INJECTIONS` | `0` | `1`: negative control, the scripted model obeys instructions in catalogue rows (`e2e.sh up` again to apply) |
@@ -181,19 +182,25 @@ version, which setup fills in after the review.
 
 ## PII
 
-Core protects PII only on calls to models outside the trust boundary: a `t0_sovereign` model
-(every on-prem model of `compose/config/caliban.toml`) receives the raw text whatever the tenant's
-PII mode (core `crates/caliban-gateway/src/pipeline.rs`, `use_protected`). The e2e therefore
-registers its chat model as `t2_contracted`, which is also the honest setting when the GPU host
-is operated by someone else than the data owner. With `E2E_CHAT_TRUST_TIER=t0_sovereign` the PII
-checks fail by design.
+The chat model is on-prem, so the e2e registers it `t0_sovereign`, like every model of
+`compose/config/caliban.toml`. In-boundary models (`t0_sovereign`, `t1_attested`) receive the text
+as is unless the tenant sets `pii_on_sovereign` (research note 05, section 4); a node's
+`guardrails.pii` is a floor on every one of its model calls, sovereign models included, and on
+the results of the tools it reads (core `docs/nodes.md`, "The spec"). The triage node sets
+`guardrails.pii: mask`, so no node call sees an identifier in clear whatever the tenant's setting.
+`E2E_PII_ON_SOVEREIGN=1` extends the tenant's `mask` mode to its other in-boundary calls
+(`caliban/auto`'s classification embedding, plain model answers such as R2);
+`E2E_CHAT_TRUST_TIER=t2_contracted` models a GPU host that someone other than the data owner
+operates.
 
-What the regex tier (L0) masks in this build: international phone numbers with groups of 2 to 4
-digits, e-mail addresses, cards, IBANs, US SSNs. Names need the NER tier; the ID formats used
-here (a Lebanese-style ID, a French NIR), French national phone numbers (`06 12 34 56 78`) and
-Lebanese mobile numbers with a one-digit prefix (`+961 3 456 789`) have no detector. The run
-reports those as known gaps rather than failures (with `E2E_EXPECT_NER=1`, names count as
-failures).
+What L0 masks in this build (core README, "PII"): e-mail addresses, cards, IBANs, US SSNs, the
+French NIR (validated by its key), phone numbers in international format (`+961 3 456 789` and
+`+961 71 234 567` included), North American and French national format (`06 12 34 56 78`), and the
+tenant's own patterns. Setup gives `medmarket` one pattern, `NATIONAL_ID` for the synthetic
+Lebanese-style ID (`LB-4471-9902-3`). A Lebanese number without its trunk prefix (`71 234 567`)
+needs a tenant pattern too (it looks like an amount); no request uses one. Every identifier of
+the requests but the names must be masked, or the run fails. Names need the NER tier: the run
+reports them as known gaps (with `E2E_EXPECT_NER=1`, as failures).
 
 ## Gaps in core found by this test
 

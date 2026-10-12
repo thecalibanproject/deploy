@@ -67,12 +67,14 @@ case "$E2E_TARGET" in
     ;;
   *) die "E2E_TARGET must be local or testbed (got '$E2E_TARGET')" ;;
 esac
-# The chat model the e2e registers through the admin API. Its trust tier decides whether the
-# gateway protects PII on its calls: core skips PII protection for t0_sovereign models, so the
-# e2e registers the model as t2_contracted to exercise masking (README.md, "PII").
+# The chat model the e2e registers through the admin API: on-prem, so t0_sovereign like every model
+# of compose/config/caliban.toml. The node's guardrails.pii masks identifiers on its calls whatever
+# the model's tier; E2E_PII_ON_SOVEREIGN=1 makes the tenant mask its other in-boundary calls too
+# (README.md, "PII").
 : "${E2E_CHAT_MODEL_ID:=e2e/chat}"
 : "${E2E_CHAT_BASE_URL:=http://caliban-e2e-model:8000/v1}"
-: "${E2E_CHAT_TRUST_TIER:=t2_contracted}"
+: "${E2E_CHAT_TRUST_TIER:=t0_sovereign}"
+: "${E2E_PII_ON_SOVEREIGN:=0}"
 : "${E2E_PRICE_IN_PER_MTOK:=0.20}"
 : "${E2E_PRICE_OUT_PER_MTOK:=0.80}"
 : "${E2E_TENANT:=medmarket}"
@@ -85,7 +87,7 @@ esac
 export E2E_RAG E2E_RAG_COLLECTION E2E_RAG_EMBED_MODEL E2E_RAG_RERANK_MODEL
 export E2E_DIR E2E_WORK_DIR E2E_TARGET E2E_PROJECT E2E_UPSTREAM_MODEL E2E_MODEL_FAMILY E2E_MODEL_UPSTREAM_URL \
   E2E_CHAT_MODEL_ID E2E_CHAT_BASE_URL E2E_CHAT_TRUST_TIER E2E_PRICE_IN_PER_MTOK E2E_PRICE_OUT_PER_MTOK \
-  E2E_TENANT E2E_PII_MODE E2E_EXPECT_NER E2E_ROUTING_EMBED_MODEL
+  E2E_TENANT E2E_PII_MODE E2E_PII_ON_SOVEREIGN E2E_EXPECT_NER E2E_ROUTING_EMBED_MODEL
 [[ -n "${E2E_MAX_P95_MS:-}" ]] && export E2E_MAX_P95_MS
 [[ -n "${E2E_EVAL_TIMEOUT_S:-}" ]] && export E2E_EVAL_TIMEOUT_S
 

@@ -4,12 +4,13 @@
 Idempotent where the API allows it: re-running reuses the tenant, model, datasource and approved
 ontology, and creates a new node version only when the rendered spec changed.
 
-Steps: the chat model (provider + catalogue entry), the tenant (PII mask, spend caps), its routes,
-an application API key, the MongoDB datasource, its ontology (proposed, then approved one element at
-a time), the triage node (draft, published without promotion), its golden set and promotion bar,
-the golden and injection evals, the gate, the promotion, and the `triage` intent mapped to
-node/triage@published for caliban/auto. With E2E_RAG=1, then the RAG stage (lib/rag.py): the
-document collection, its ingest and indexing, the `careguide` node and its API key.
+Steps: the chat model (provider + catalogue entry), the tenant (PII mask, its own PII patterns,
+spend caps), its routes, an application API key, the MongoDB datasource, its ontology (proposed,
+then approved one element at a time), the triage node (draft, published without promotion), its
+golden set and promotion bar, the golden and injection evals, the gate, the promotion, and the
+`triage` intent mapped to node/triage@published for caliban/auto. With E2E_RAG=1, then the RAG
+stage (lib/rag.py): the document collection, its ingest and indexing, the `careguide` node and its
+API key.
 
 One step cannot use the public API: core has no endpoint that writes proposed ontology elements
 (POST /api/v1/datasources/{id}/introspect only marks the datasource `introspecting`, see
@@ -46,7 +47,7 @@ def created_or_exists(fn, what):
 
 def chat_model():
     step("Chat model (shared provider and catalogue entry)")
-    tier = os.environ.get("E2E_CHAT_TRUST_TIER", "t2_contracted")
+    tier = os.environ.get("E2E_CHAT_TRUST_TIER", "t0_sovereign")
     created_or_exists(lambda: cp("POST", "/api/v1/providers", {
         "id": "e2e-llm", "kind": "openai_compatible", "base_url": os.environ.get("E2E_CHAT_BASE_URL"),
         "trust_tier": tier, "cache_salt": os.environ.get("E2E_TARGET") == "testbed"}), "provider e2e-llm")
@@ -63,15 +64,31 @@ def chat_model():
     info(f"{CHAT_ID} -> {os.environ.get('E2E_UPSTREAM_MODEL')} at {os.environ.get('E2E_CHAT_BASE_URL')} ({tier})")
 
 
+# The tenant's own L0 PII patterns (core README, "PII"; research note 05, section 1: institutional
+# identifiers that generic detectors miss). The synthetic Lebanese-style ID of R1 (LB-4471-9902-3)
+# has no built-in detector. French NIR, French national phones and Lebanese international numbers
+# are built in; a Lebanese number without its trunk prefix (71 234 567) would need a pattern here
+# too, and no request uses one.
+PII_PATTERNS = [{"label": "NATIONAL_ID", "pattern": r"\bLB-\d{4}-\d{4}-\d\b"}]
+
+
 def tenant(st):
     step(f"Tenant {TENANT}")
     pii = os.environ.get("E2E_PII_MODE", "mask")
+    # Off by default: in-boundary models (t0_sovereign, t1_attested) get the text as is, and the
+    # node's guardrails.pii floor is what masks its calls (core docs/nodes.md). 1 also masks the
+    # tenant's other calls to in-boundary models (caliban/auto's classification embedding, plain
+    # model answers).
+    on_sovereign = os.environ.get("E2E_PII_ON_SOVEREIGN", "0") == "1"
     caps = {"daily_usd": 20, "monthly_usd": 200}
-    t = created_or_exists(lambda: cp("POST", "/api/v1/tenants", {
-        "name": TENANT, "pii_default": pii, "node_spend_caps": caps}), f"tenant {TENANT}")
+    settings = {"pii_default": pii, "pii_on_sovereign": on_sovereign, "pii_patterns": PII_PATTERNS,
+                "node_spend_caps": caps}
+    t = created_or_exists(lambda: cp("POST", "/api/v1/tenants", dict(settings, name=TENANT)), f"tenant {TENANT}")
     if t is None:
-        cp("PATCH", f"/api/v1/tenants/{TENANT}", {"pii_default": pii, "node_spend_caps": caps})
-    info(f"pii_default={pii}, node spend caps {caps}")
+        t = cp("PATCH", f"/api/v1/tenants/{TENANT}", settings).body
+    st["tenant_settings"] = {k: t.get(k) for k in ("pii_default", "pii_on_sovereign", "pii_patterns")}
+    info(f"pii_default={t.get('pii_default')}, pii_on_sovereign={t.get('pii_on_sovereign')}, "
+         f"pii_patterns={json.dumps(t.get('pii_patterns'))}, node spend caps {caps}")
     cp("PUT", f"/api/v1/tenants/{TENANT}/routes", {"routes": [{"intent": "default", "models": [CHAT_ID]}]})
     info(f"route default -> {CHAT_ID}")
     if not st.get("api_key"):
