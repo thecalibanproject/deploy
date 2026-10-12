@@ -53,6 +53,7 @@ What `E2E_TARGET=testbed` sets (override any of them in the environment):
 | Chat model | `e2e/chat` = `Qwen/Qwen3.8-27B-FP8`, family `qwen3.8`, through the recorder (`caliban-e2e-model`) to `http://$GPU_IP:8000/v1`, registered `t2_contracted` so the gateway masks PII |
 | Routing embedder | `local/qwen3-embedding-0.6b` (the stack's TEI on the GPU host) |
 | Evals | golden p95 bar 300 s, eval timeout 1 h: Qwen3.8 thinks before every node call, core sends no reasoning setting with them |
+| RAG stage (`E2E_RAG=1`) | collection `care_docs` embedded with `local/qwen3-embedding-0.6b` and reranked with `local/qwen3-reranker-0.6b` (the GPU host's TEI on 8001 and vLLM on 8002), vectors in the gateway's Qdrant |
 
 Expect each triage request to take tens of seconds (two or three thinking calls); `CALIBAN_NODE_SYNC_WAIT_SECS`
 is 180 in the e2e, and the run script follows a run that outlives it. The scripted human answers
@@ -67,6 +68,30 @@ Optional, before `up`:
 - Negative control for the injection row: `E2E_FOLLOW_INJECTIONS=1` only affects the scripted
   model, not a real one.
 
+### The RAG stage
+
+Optional, off by default. It needs a gateway image with core's retrieval (the gateway's
+`caliban.toml` carries the `[rag]` table, which an older image refuses) and Qdrant 1.19.2 (the
+compose default). Run it with the triage stages, or add it to a stack already set up:
+
+```sh
+export E2E_TARGET=testbed E2E_RAG=1
+e2e/health-triage/e2e.sh setup     # the triage setup again (idempotent), then the collection,
+                                   # the eight documents, indexing, node careguide and its key
+e2e/health-triage/e2e.sh run       # R1 to R7, then G1 to G4; `run G1 G3` for some of them
+```
+
+Indexing goes through the real embedder: eight short documents take seconds, not minutes. With a
+real model the agent may phrase its search differently and pick other passages: the `rag` checks
+(retrieval, quarantine, taint, grounded citations, metering) must hold whatever it does; the
+`quality` checks (best passage, `[n]` markers, language, the expected fact) are reported and fail
+the run only with `E2E_STRICT_QUALITY=1`. Qwen3.8 answers the node's JSON output by prompting plus
+one corrective retry (core sends no constrained decoding with node calls, gap 7 in the README).
+
+With `gateway_run_worker=true` the worker on the gateway indexes too, as the gateway's own database
+user: the worker grants of the chart README (`rag_collection`, `rag_document`) are not exercised
+here.
+
 Keep the report: copy `e2e/health-triage/.work/report-*.md` and `results-*.json` to the testbed
 bucket's `results/` prefix (with `results_upload = true`) or paste them from the session.
 
@@ -77,4 +102,5 @@ e2e/health-triage/e2e.sh down      # e2e containers, volumes and network; caliba
 ```
 
 Then destroy the testbed (`tofu destroy`, same variables). `down` leaves the tenant `medmarket`
-and its node in the gateway's Postgres; they go with the testbed.
+and its nodes in the gateway's Postgres, and the RAG stage's vectors in its Qdrant
+(`caliban_rag_*` collections); they go with the testbed.

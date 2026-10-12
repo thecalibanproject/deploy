@@ -21,8 +21,10 @@ e2e/health-triage/
 ├── seed/                    replica set and users (mongosh), the synthetic marketplace
 ├── ontology/health.csm.json the CSM for the three collections (51 elements, proposed)
 ├── node/triage.node.json    the triage node (workflow), golden.json its golden set
+├── node/careguide.node.json the RAG stage's agent node (builtin://rag_search)
+├── rag/                     the RAG stage's documents (en, fr, ar), requests and expectations
 ├── mock/model.py            scripted OpenAI-compatible model, or a recorder in front of a real one
-├── lib/                     setup.py and run.py (Python 3.9+, stdlib only), common.py
+├── lib/                     setup.py and run.py (Python 3.9+, stdlib only), common.py, rag.py
 └── RUN-ON-TESTBED.md        the same test on the AWS testbed's L40S with Qwen3.8-27B
 ```
 
@@ -37,6 +39,7 @@ e2e/health-triage/e2e.sh all          # up, setup, run; prints the checks, write
 e2e/health-triage/e2e.sh run          # again: repeated prompts hit the exact cache (cost 0);
                                       # E2E_PROMPT_TAG=$(date +%s) makes every call run again
 e2e/health-triage/e2e.sh run R5 R6    # only some requests
+E2E_RAG=1 e2e/health-triage/e2e.sh all  # with the optional RAG stage (below)
 e2e/health-triage/e2e.sh down         # containers, volumes and the work directory
 ```
 
@@ -59,6 +62,10 @@ the raw results as JSON).
 | `E2E_FOLLOW_INJECTIONS` | `0` | `1`: negative control, the scripted model obeys instructions in catalogue rows (`e2e.sh up` again to apply) |
 | `E2E_STRICT_QUALITY` | `0` | `1`: answer-quality checks fail the run too |
 | `E2E_PROMPT_TAG` | empty | Appended to every prompt (`(ref <tag>)`): a new tag misses the exact cache, so every model call runs again |
+| `E2E_RAG` | `0` | `1`: the RAG stage too (setup and run); off until core's retrieval is in the images you test |
+| `E2E_RAG_COLLECTION` | `care_docs` | The document collection (its embedding model is fixed for its life: change the name to start over with another one) |
+| `E2E_RAG_EMBED_MODEL`, `E2E_RAG_RERANK_MODEL` | `E2E_ROUTING_EMBED_MODEL`, none | The collection's embedding and rerank models (the scripted model has no `/v1/rerank`) |
+| `E2E_RAG_INDEX_TIMEOUT_S` | `600` | How long setup waits for the documents to be indexed |
 
 ## What it does
 
@@ -102,6 +109,65 @@ member's profiler, by the run's comment; none on the primary; only compiled CQIR
 the model received (the e2e model's request log), the answer against the rows the queries
 returned, the usage events of the run against the run's cost, and the audit chain (the human
 answer is `node.run.answer`).
+
+## RAG stage (`E2E_RAG=1`)
+
+Off by default: with `E2E_RAG` unset or `0`, setup and run do exactly what is described above. It
+needs a Caliban image with retrieval (core `docs/rag.md`; an older image refuses the `[rag]` table
+of `compose/config/caliban.toml`) and Qdrant 1.19.2 or later (the stack's default).
+
+**Setup** (after the triage node, admin API):
+
+1. Collection `care_docs` (`POST /api/v1/tenants/medmarket/rag/collections`): embedding model
+   `E2E_RAG_EMBED_MODEL` (locally the scripted model's hashed vectors), rerank model
+   `E2E_RAG_RERANK_MODEL` (none locally), documents untrusted unless they say otherwise.
+2. Eight Markdown documents from `rag/documents.json`, all fictional, ingested one by one:
+   - hospital protocols: chest pain triage (English, Cedar Valley Medical Center), fever in
+     children (French, Hôpital Rive-Claire), skin rash (Arabic, Hamra Lantern Clinic);
+   - the Cedrus Mutual Essential plan's coverage policy in English, French and Arabic, in force
+     since 1 January 2026;
+   - the policy's 2025 edition, `valid_to` 31 December 2025: indexed, but outside its validity
+     window, so it must never be retrieved (stale documents flip answers, research note 06);
+   - `coverage-update-untrusted`, an untrusted upload about the same topic as the first question
+     (knee MRI) that carries a prompt injection and an exfiltration request (marker
+     `zx-canary-rag1`): the injection scan must quarantine it.
+3. Wait until the standalone process has indexed every document (pseudonymised, embedded through
+   the gateway, written to Qdrant): the trusted ones `ready`, the untrusted one `quarantined`.
+4. Node `careguide` (`node/careguide.node.json`): an agent with `builtin://rag_search` and the
+   scope `rag.care_docs:read`, published and promoted, and an API key that may run only
+   `careguide`, narrowed to `rag.care_docs:read` (`datasource_scopes`).
+
+**Run**: the documents' states, then four questions through `POST /v1/nodes/careguide/runs` with
+that key (the triage requests are unchanged; `run G1` runs one of them):
+
+| Request | Needs |
+|---|---|
+| G1 English: does the plan cover a knee MRI, is pre-authorisation needed? | The 2026 policy (60%, pre-authorisation); the expired edition and the poisoned upload are on the same topic |
+| G2 French: warning signs for a child with fever (Hôpital Rive-Claire protocol) | The French protocol (fever over 48 hours under 2 years, ...) |
+| G3 Arabic: does the insurance cover an echocardiogram, at what rate? | The Arabic policy (70%) |
+| G4 English: how soon must the ECG be recorded (chest pain protocol)? | The English protocol (10 minutes) |
+
+Checks, of kind `rag` (they fail the run like flow checks):
+
+- every trusted document is `ready` and served; the poisoned one is `quarantined`, not live,
+  with an `instruction` or `exfiltration` finding, and in `?status=quarantined`;
+- each run succeeded with a `rag_search` tool step whose result carries the `retrieved` taint
+  label, and the model call after it carries the label too;
+- the search returned cited passages (`doc_id`, version, `chunk_id`), framed as data, not
+  instructions, and the expected document is among them;
+- no passage of the expired policy or the quarantined upload is ever returned, and the canary
+  never reaches the model (its whole request log) or the answer;
+- the model read the cited passages (the first passage's chunk id is in its request log);
+- the answer's citations are passages the search returned (same `n`, same `doc_id`);
+- the query embedding (and the rerank, with a reranker) is metered as the run's;
+- the retrieval writes are in the audit log (`rag.document.ingest`).
+
+Answer quality (kind `quality`, a failure only with `E2E_STRICT_QUALITY=1`): the expected document
+is the best passage (`[1]`), the answer marks its citations `[n]`, is in the question's language
+and states the expected fact. The report gets a "Retrieval" section with the documents, every
+passage of every answer and the answers. With the scripted model the agent searches with the
+question as the query, then answers with the passages' sentences that share the most words with
+the question.
 
 ## The triage node
 
