@@ -15,7 +15,7 @@ import urllib.request
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # e2e/developer
 APP = os.path.join(HERE, "app")
 DEPLOY = os.path.dirname(os.path.dirname(HERE))
-SDK_GIT = "git+https://github.com/thecalibanproject/sdk-python.git@main"
+SDK_GIT = "https://github.com/thecalibanproject/sdk-python/archive/refs/heads/main.tar.gz"  # pip needs no git
 
 
 def settings(env=None):

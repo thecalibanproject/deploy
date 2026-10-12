@@ -43,7 +43,7 @@ kNN votes split between billing and bug_report would abstain (note 02: agent rou
 Python 3.11 or later for `app/` (the SDK needs it); seed, check and the scenario helpers are stdlib.
 The app scripts need the SDK on their path: the scenario installs it once with
 `pip install --target $E2E_WORK_DIR/developer/pylib $DEV_SDK_SRC` (default: `../sdk-python` next to
-this repository when it exists, else the GitHub repository's `main`).
+this repository when it exists, else the GitHub repository's `main` as a tarball, so no git is needed).
 
 **Without Docker** (how it was tested): a `caliban standalone` with the in-memory store, `[rag]
 index = "memory"`, a `[routing]` table whose `embedding_model` is served by `mock/model.py`, and
@@ -72,7 +72,7 @@ collection embeds with `local/qwen3-embedding-0.6b` and reranks with `local/qwen
 | `DEV_CHAT_BASE_URL` | `http://caliban-e2e-dev-model:8000/v1` / `http://caliban-e2e-model:8000/v1` | Where that model is served |
 | `DEV_UPSTREAM_MODEL`, `DEV_MODEL_FAMILY` | `dev-scripted`, none / `Qwen/Qwen3.8-27B-FP8`, `qwen3.8` | The upstream name and family (Qwen3: thinking switched per call) |
 | `DEV_EMBED_MODEL`, `DEV_RERANK_MODEL` | `E2E_ROUTING_EMBED_MODEL`, none / Qwen3 embedding and reranker | The document collection's models |
-| `DEV_SDK_SRC` | `../sdk-python` or the GitHub `main` | What `pip` installs the SDK from |
+| `DEV_SDK_SRC` | `../sdk-python` or the GitHub `main` tarball | What `pip` installs the SDK from |
 | `DEV_EVAL_K`, `DEV_MIN_PASS_K`, `DEV_MAX_P95_MS` | `3`, `0.66`, `60000` / `300000` | Golden evals and the promotion bar |
 | `DEV_INTENT_SETTLE_S` | `5` | Wait after an intent change (see gaps) |
 | `DEV_MIN_ROUTED_OK` | `14` | check.py: prompts that must route as expected after the fix |
