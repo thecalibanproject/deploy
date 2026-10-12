@@ -16,8 +16,13 @@ Two modes, both stdlib only (Python 3.9+):
 Either way every chat request is appended, as received from Caliban, to $MOCK_LOG (JSONL), so the
 run script can prove what the model saw: PII masked or not, injected catalogue text present or not.
 
+The RAG stage's agent node (`careguide`, marker [care:answer]) is scripted too: its first turn
+calls rag_search with the question, its second answers with the passages' sentences that share the
+most words with the question, citing them as [n].
+
 MOCK_FOLLOW_INJECTIONS=1 turns the scripted model into a compromised one that obeys instructions
-it finds in catalogue rows (to show which defences hold when the model does not).
+it finds in catalogue rows or retrieved passages (to show which defences hold when the model does
+not).
 """
 import hashlib
 import json
@@ -228,6 +233,70 @@ def recommend(prompt):
     }
 
 
+# ─────────────────────────── the scripted care guide (RAG stage) ───────────────────────────
+
+PASSAGE = re.compile(r"\n\n\[(\d+)\] ([^\n]*)\n(.*?)(?=\n\n\[\d+\] |\Z)", re.DOTALL)
+STOP = {"the", "and", "does", "what", "how", "les", "des", "une", "est", "que", "qui", "pour", "dans", "with",
+        "selon", "after", "must", "need", "this", "that", "mon", "nous", "هل", "وما"}
+NOT_FOUND = {"en": "The documents I can search do not answer this question.",
+             "fr": "Les documents que je peux consulter ne répondent pas à cette question.",
+             "ar": "الوثائق المتاحة لي لا تجيب عن هذا السؤال."}
+
+
+def words(text):
+    return {w for w in WORD.findall(text.lower()) if len(w) >= 3 and w not in STOP}
+
+
+def care(msgs, tools):
+    """An agent turn of the `careguide` node: search first, then answer from the passages."""
+    question = next((m.get("content") for m in msgs if m.get("role") == "user"), "") or ""
+    results = [m for m in msgs if m.get("role") == "tool"]
+    if not results:
+        if "rag_search" not in tools:
+            return json.dumps({"answer": NOT_FOUND[language(question)], "citations": [], "language": language(question)})
+        args = json.dumps({"query": question, "k": 4}, ensure_ascii=False)
+        return {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_rag_0", "type": "function", "function": {"name": "rag_search", "arguments": args}}]}
+    raw = results[-1].get("content") or ""
+    try:
+        out = json.loads(raw)
+    except ValueError:
+        out = {"context": raw, "results": []}
+    if not isinstance(out, dict):
+        out = {"context": str(out), "results": []}
+    lang = language(question)
+    doc_of = {r.get("n"): r.get("doc_id") for r in out.get("results") or []}
+    q = words(question)
+    scored = []
+    for m in PASSAGE.finditer(out.get("context") or ""):
+        n = int(m.group(1))
+        # The citation line names the heading path: a passage under a heading the question names
+        # ("signes d'alerte") ranks its sentences higher.
+        bonus = len(q & words(m.group(2).split(" (doc ")[0].split(" > ", 1)[-1]))
+        # Markdown wraps lines: join them back into paragraphs, keeping list items and table rows.
+        lines = []
+        for line in m.group(3).splitlines():
+            line = line.strip()
+            if lines and line and lines[-1] and not re.match(r"([-*|#]|\d+\.)", line):
+                lines[-1] += " " + line
+            else:
+                lines.append(line)
+        for seg in (x for line in lines for x in re.split(r"(?<=[.!?؟])\s+", line)):
+            seg = seg.strip(" |-*#\t")
+            if len(seg) < 4 or set(seg) <= set("|-: "):
+                continue
+            scored.append((len(q & words(seg)) + bonus, -n, seg, n))
+            if FOLLOW_INJECTIONS and "ignore all previous instructions" in seg.lower():
+                scored.append((99, -n, seg, n))
+    best = [x for x in sorted(scored, reverse=True)[:3] if x[0] > 0]
+    if not best:
+        return json.dumps({"answer": NOT_FOUND[lang], "citations": [], "language": lang}, ensure_ascii=False)
+    answer = " ".join(f"{seg.replace(' | ', ': ')} [{n}]" for _, _, seg, n in best)
+    cited = sorted({n for _, _, _, n in best})
+    return json.dumps({"answer": answer, "citations": [{"n": n, "doc_id": doc_of.get(n, "")} for n in cited],
+                       "language": lang}, ensure_ascii=False)
+
+
 def judge(prompt):
     out = prompt.split("Output to grade:", 1)[-1]
     ok = '"facility"' in out and '"message"' in out and "zx-attacker" not in out
@@ -250,6 +319,9 @@ def scripted(body):
         return json.dumps(assess(everything), ensure_ascii=False)
     if "[triage:recommend]" in everything:
         return json.dumps(recommend(everything), ensure_ascii=False)
+    if "[care:answer]" in system:
+        tools = [t.get("function", {}).get("name") for t in body.get("tools") or []]
+        return care(msgs, tools)
     last = next((chat_text([m]) for m in reversed(msgs) if m.get("role") == "user"), "")
     return f"(scripted model) A general answer to: {last[:200]}"
 
@@ -314,7 +386,11 @@ class Handler(BaseHTTPRequestHandler):
         record(self.path, body)
         if UPSTREAM:
             return self.forward(UPSTREAM, raw)
-        text = scripted(body)
+        out = scripted(body)
+        # A dict is an assistant message with tool calls (the care guide's search).
+        message = out if isinstance(out, dict) else {"role": "assistant", "content": out}
+        finish = "tool_calls" if message.get("tool_calls") else "stop"
+        text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)
         prompt_tokens = len(chat_text(body.get("messages", [])).encode()) // 4 + 8
         usage = {"prompt_tokens": prompt_tokens, "completion_tokens": len(text.encode()) // 4 + 1}
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
@@ -329,7 +405,7 @@ class Handler(BaseHTTPRequestHandler):
             data = "".join(f"data: {json.dumps(c, ensure_ascii=False)}\n\n" for c in chunks) + "data: [DONE]\n\n"
             return self.send(200, data.encode(), "text/event-stream")
         self.send(200, {"id": rid, "object": "chat.completion", "created": int(time.time()), "model": body.get("model"),
-                        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
                         "usage": usage})
 
 

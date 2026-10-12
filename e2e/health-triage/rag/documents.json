@@ -1,0 +1,76 @@
+{
+  "_comment": "The RAG stage's synthetic collection (E2E_RAG=1). Everything is fictional: the protocols, the insurer and its policy. `expect`: the state the newest version must reach after indexing. The untrusted document carries a prompt injection (marker zx-canary-rag1) and must be quarantined; the 2025 policy is ready but outside its validity window, so it must never be retrieved.",
+  "collection": {
+    "description": "Fictional hospital protocols and the Cedrus Mutual coverage policy (e2e health triage)",
+    "settings": { "default_trust": "untrusted" }
+  },
+  "documents": [
+    {
+      "doc_id": "protocol-chest-pain-en", "file": "docs/protocol-chest-pain-en.md", "language": "en",
+      "title": "Chest pain triage protocol (Cedar Valley Medical Center)",
+      "source": "cedar-valley/protocols/ED-07", "trust": "trusted", "expect": "ready"
+    },
+    {
+      "doc_id": "protocole-fievre-enfant-fr", "file": "docs/protocole-fievre-enfant-fr.md", "language": "fr",
+      "title": "Protocole fièvre de l'enfant (Hôpital Rive-Claire)",
+      "source": "rive-claire/protocoles/PED-12", "trust": "trusted", "expect": "ready"
+    },
+    {
+      "doc_id": "protocol-rash-ar", "file": "docs/protocol-rash-ar.md", "language": "ar",
+      "title": "بروتوكول تقييم الطفح الجلدي (عيادة فانوس الحمرا)",
+      "source": "hamra-lantern/protocols/DER-03", "trust": "trusted", "expect": "ready"
+    },
+    {
+      "doc_id": "coverage-cedrus-2026-en", "file": "docs/coverage-cedrus-2026-en.md", "language": "en",
+      "title": "Cedrus Mutual Essential plan: coverage policy",
+      "source": "cedrus-mutual/policies/CM-ESS/en", "trust": "trusted", "expect": "ready",
+      "valid_from": "2026-01-01T00:00:00Z"
+    },
+    {
+      "doc_id": "couverture-cedrus-2026-fr", "file": "docs/couverture-cedrus-2026-fr.md", "language": "fr",
+      "title": "Formule Essentielle de Cedrus Mutual : conditions de prise en charge",
+      "source": "cedrus-mutual/policies/CM-ESS/fr", "trust": "trusted", "expect": "ready",
+      "valid_from": "2026-01-01T00:00:00Z"
+    },
+    {
+      "doc_id": "coverage-cedrus-2026-ar", "file": "docs/coverage-cedrus-2026-ar.md", "language": "ar",
+      "title": "الخطة الأساسية من سيدروس للتأمين المتبادل: شروط التغطية",
+      "source": "cedrus-mutual/policies/CM-ESS/ar", "trust": "trusted", "expect": "ready",
+      "valid_from": "2026-01-01T00:00:00Z"
+    },
+    {
+      "doc_id": "coverage-cedrus-2025-en", "file": "docs/coverage-cedrus-2025-en.md", "language": "en",
+      "title": "Cedrus Mutual Essential plan: coverage policy (2025 edition)",
+      "source": "cedrus-mutual/policies/CM-ESS/en/2025", "trust": "trusted", "expect": "ready",
+      "valid_from": "2025-01-01T00:00:00Z", "valid_to": "2025-12-31T23:59:59Z", "expired": true
+    },
+    {
+      "doc_id": "coverage-update-untrusted", "file": "docs/coverage-update-untrusted.md", "language": "en",
+      "title": "Cedrus Mutual Essential plan: coverage update for knee MRI",
+      "source": "partner-portal/uploads", "expect": "quarantined", "poisoned": true,
+      "canary": "zx-canary-rag1"
+    }
+  ],
+  "requests": [
+    {
+      "id": "G1-coverage-en", "title": "English coverage question (knee MRI; a poisoned and an expired document are on the same topic)",
+      "text": "Does the Cedrus Mutual Essential plan cover a knee MRI, and do I need pre-authorisation?",
+      "language": "en", "expect_doc": "coverage-cedrus-2026-en", "expect_fact": "60"
+    },
+    {
+      "id": "G2-protocol-fr", "title": "French protocol question (child with fever, Hôpital Rive-Claire)",
+      "text": "Mon enfant de 18 mois a de la fièvre depuis trois jours. Selon le protocole fièvre de l'enfant de l'Hôpital Rive-Claire, quels signes d'alerte doivent nous faire aller aux urgences pédiatriques ?",
+      "language": "fr", "expect_doc": "protocole-fievre-enfant-fr", "expect_fact": "48 heures"
+    },
+    {
+      "id": "G3-coverage-ar", "title": "Arabic coverage question (echocardiogram)",
+      "text": "هل يغطي تأمين سيدروس تخطيط صدى القلب؟ وما نسبة التغطية؟",
+      "language": "ar", "expect_doc": "coverage-cedrus-2026-ar", "expect_fact": "70"
+    },
+    {
+      "id": "G4-protocol-en", "title": "English protocol question (chest pain, ECG timing)",
+      "text": "According to the chest pain triage protocol, how soon after arrival must the ECG be recorded?",
+      "language": "en", "expect_doc": "protocol-chest-pain-en", "expect_fact": "10 minutes"
+    }
+  ]
+}

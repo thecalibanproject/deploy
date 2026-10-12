@@ -4,6 +4,7 @@
 #   e2e/health-triage/e2e.sh up       # stack + MongoDB replica set + synthetic seed + model
 #   e2e/health-triage/e2e.sh setup    # tenant, key, datasource, ontology, node, evals, gate, intent
 #   e2e/health-triage/e2e.sh run      # end-to-end requests through caliban/auto, report
+#   E2E_RAG=1 e2e/health-triage/e2e.sh setup | run | all   # plus the optional RAG stage (off by default)
 #   e2e/health-triage/e2e.sh all      # up, setup, run
 #   e2e/health-triage/e2e.sh down     # remove what `up` created (containers, volumes, work dir)
 #   e2e/health-triage/e2e.sh status | logs [service]
@@ -40,6 +41,8 @@ case "$E2E_TARGET" in
     : "${E2E_ROUTING_EMBED_MODEL:=e2e/embed}"
     : "${E2E_ROUTING_PRESET:=mock}"
     : "${E2E_EXPECT_NER:=0}"
+    # RAG stage: the scripted model embeds; it has no /v1/rerank, so no reranker.
+    : "${E2E_RAG_RERANK_MODEL:=}"
     ;;
   testbed)
     : "${E2E_PROJECT:=caliban}"
@@ -55,6 +58,8 @@ case "$E2E_TARGET" in
     : "${E2E_ROUTING_EMBED_MODEL:=local/qwen3-embedding-0.6b}"
     : "${E2E_ROUTING_PRESET:=qwen3-embedding}"
     : "${E2E_EXPECT_NER:=0}"
+    # RAG stage: the stack's reranker (vLLM on the GPU host, port 8002 in the testbed config).
+    : "${E2E_RAG_RERANK_MODEL:=local/qwen3-reranker-0.6b}"
     # Qwen3.8 thinks before every answer (core sends node calls no reasoning setting): allow
     # minutes, not seconds, for an eval trial and for the golden bar's p95.
     : "${E2E_MAX_P95_MS:=300000}"
@@ -72,6 +77,12 @@ esac
 : "${E2E_PRICE_OUT_PER_MTOK:=0.80}"
 : "${E2E_TENANT:=medmarket}"
 : "${E2E_PII_MODE:=mask}"
+# The optional RAG stage (README.md, "RAG stage"): off by default; 1 adds the document collection,
+# the `careguide` node and its requests to setup and run. Needs a Caliban image with retrieval.
+: "${E2E_RAG:=0}"
+: "${E2E_RAG_COLLECTION:=care_docs}"
+: "${E2E_RAG_EMBED_MODEL:=$E2E_ROUTING_EMBED_MODEL}"
+export E2E_RAG E2E_RAG_COLLECTION E2E_RAG_EMBED_MODEL E2E_RAG_RERANK_MODEL
 export E2E_DIR E2E_WORK_DIR E2E_TARGET E2E_PROJECT E2E_UPSTREAM_MODEL E2E_MODEL_FAMILY E2E_MODEL_UPSTREAM_URL \
   E2E_CHAT_MODEL_ID E2E_CHAT_BASE_URL E2E_CHAT_TRUST_TIER E2E_PRICE_IN_PER_MTOK E2E_PRICE_OUT_PER_MTOK \
   E2E_TENANT E2E_PII_MODE E2E_EXPECT_NER E2E_ROUTING_EMBED_MODEL
@@ -273,6 +284,6 @@ case "$cmd" in
   down) down ;;
   status) secrets; dc ps ;;
   logs) secrets; dc logs --no-color --tail "${TAIL:-200}" "$@" ;;
-  ""|-h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|-h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$cmd' (up | setup | run | all | down | status | logs)" ;;
 esac

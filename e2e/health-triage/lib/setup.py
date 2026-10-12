@@ -8,7 +8,8 @@ Steps: the chat model (provider + catalogue entry), the tenant (PII mask, spend 
 an application API key, the MongoDB datasource, its ontology (proposed, then approved one element at
 a time), the triage node (draft, published without promotion), its golden set and promotion bar,
 the golden and injection evals, the gate, the promotion, and the `triage` intent mapped to
-node/triage@published for caliban/auto.
+node/triage@published for caliban/auto. With E2E_RAG=1, then the RAG stage (lib/rag.py): the
+document collection, its ingest and indexing, the `careguide` node and its API key.
 
 One step cannot use the public API: core has no endpoint that writes proposed ontology elements
 (POST /api/v1/datasources/{id}/introspect only marks the datasource `introspecting`, see
@@ -25,6 +26,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (HERE, TENANT, HttpError, compose, cp, info, load_state, q, save_state,  # noqa: E402
                     step, wait_healthy, wait_until)
+import rag  # noqa: E402  (the optional RAG stage, E2E_RAG=1)
 
 CHAT_ID = os.environ.get("E2E_CHAT_MODEL_ID", "e2e/chat")
 NODE = "triage"
@@ -256,8 +258,13 @@ def main():
     gate_and_promote(st)
     intent(st)
     save_state(st)
+    if rag.ENABLED:
+        rag.setup(st)
+        save_state(st)
     step("Setup done")
     info(f"tenant {TENANT}, node triage v{st['node_version']}, ontology {st['ontology_version']}")
+    if rag.ENABLED:
+        info(f"retrieval: collection {st['rag']['collection']}, node {rag.NODE} v{st['rag']['node_version']}")
 
 
 if __name__ == "__main__":

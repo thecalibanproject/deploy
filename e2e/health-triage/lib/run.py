@@ -12,7 +12,9 @@ completions with the tenant's API key), with checks on everything around each an
   answer carries none of it;
 - answer quality: specialty, language, city, services and facility taken from the returned rows;
 - metering and audit: usage events of the run, cost, the hash-chained audit log;
-- latency.
+- latency;
+- with E2E_RAG=1, the RAG stage (lib/rag.py): documents indexed or quarantined, questions answered
+  by the `careguide` node from cited passages labelled `retrieved`.
 
 Writes a Markdown report to $E2E_WORK_DIR/report-<UTC time>.md (and report.md) and exits non-zero
 when a flow check fails. Quality checks are reported; they fail the run only with
@@ -28,6 +30,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import (TENANT, WORK, HttpError, cp, dp, info, load_state, mongo_eval, step,  # noqa: E402
                     wait_until)
+import rag  # noqa: E402  (the optional RAG stage, E2E_RAG=1)
 
 EXPECT_NER = os.environ.get("E2E_EXPECT_NER", "0") == "1"
 STRICT_QUALITY = os.environ.get("E2E_STRICT_QUALITY", "0") == "1"
@@ -407,7 +410,7 @@ def md_escape(s):
     return str(s).replace("|", "\\|").replace("\n", " ")
 
 
-def report(st, results, checks, audit, started, elapsed):
+def report(st, results, checks, audit, started, elapsed, rag_summary=None, rag_results=()):
     ts = started.strftime("%Y%m%dT%H%M%SZ")
     lines = [f"# Health triage e2e report ({started.strftime('%Y-%m-%d %H:%M UTC')})", ""]
     target = os.environ.get("E2E_TARGET", "local")
@@ -418,6 +421,7 @@ def report(st, results, checks, audit, started, elapsed):
         f"- Tenant `{TENANT}` (PII mode `{os.environ.get('E2E_PII_MODE', 'mask')}`), node `triage` v{st.get('node_version')} "
         f"({str(st.get('node_hash', ''))[:23]}...), ontology `{st.get('ontology_version')}`",
         f"- Wall time {elapsed:.1f} s for {len(results)} requests"
+        + (f" and {len(rag_results)} retrieval requests" if rag_summary is not None else "")
         + ("; **negative control: the scripted model obeys injected instructions (E2E_FOLLOW_INJECTIONS=1)**"
            if os.environ.get("E2E_FOLLOW_INJECTIONS") == "1" else ""), "",
     ]
@@ -466,6 +470,7 @@ def report(st, results, checks, audit, started, elapsed):
             lines += [f"Metering: {json.dumps(r['usage'])}", ""]
         parsed = r.get("parsed") or {}
         lines += ["Answer:", "", "```json", json.dumps(parsed or r.get("answer"), ensure_ascii=False, indent=2)[:3000], "```", ""]
+    lines += rag.report_lines(rag_summary, rag_results)
     lines += ["## Audit", "", f"chain_verified: {audit.get('chain_verified')}; actions for the tenant: "
               f"{json.dumps(audit.get('actions'))}", ""]
     text = "\n".join(lines)
@@ -474,7 +479,10 @@ def report(st, results, checks, audit, started, elapsed):
         with open(os.path.join(WORK, name), "w", encoding="utf-8") as f:
             f.write(text)
     with open(os.path.join(WORK, f"results-{ts}.json"), "w", encoding="utf-8") as f:
-        json.dump({"results": results, "checks": checks.items}, f, ensure_ascii=False, indent=2, default=str)
+        dump = {"results": results, "checks": checks.items}
+        if rag_summary is not None:
+            dump["rag"] = {"summary": rag_summary, "results": list(rag_results)}
+        json.dump(dump, f, ensure_ascii=False, indent=2, default=str)
     return os.path.join(WORK, f"report-{ts}.md")
 
 
@@ -496,13 +504,14 @@ def main():
         except (HttpError, TimeoutError, RuntimeError) as e:
             checks.add("flow", f"{spec['id']} completed", False, str(e)[:300])
             results.append({"id": spec["id"], "title": spec["title"], "prompt": spec["text"], "error": str(e)})
+    rag_results, rag_summary = rag.run(st, checks, timeout, only, PROMPT_TAG, MODEL_LOG)
     audit = audit_checks(st, results, checks)
-    path = report(st, results, checks, audit, started, time.monotonic() - t0)
-    flow = checks.failed({"flow", "pii"})
+    path = report(st, results, checks, audit, started, time.monotonic() - t0, rag_summary, rag_results)
+    flow = checks.failed({"flow", "pii", "rag"})
     quality = checks.failed({"quality"})
     gaps = [c for c in checks.items if c[2] == "GAP"]
     step("Summary")
-    info(f"{sum(1 for c in checks.items if c[2] == 'PASS')} passed, {len(flow)} flow/PII failures, "
+    info(f"{sum(1 for c in checks.items if c[2] == 'PASS')} passed, {len(flow)} flow/PII{'/RAG' if rag.ENABLED else ''} failures, "
          f"{len(quality)} quality failures, {len(gaps)} known gaps")
     info(f"report: {path}")
     if flow or (STRICT_QUALITY and quality):

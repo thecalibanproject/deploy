@@ -418,7 +418,23 @@ jobs:
           done
           python3 -m py_compile "$E2E_DIR"/lib/*.py "$E2E_DIR"/mock/model.py
           python3 -c 'import json, sys; [json.load(open(f, encoding="utf-8")) for f in sys.argv[1:]]' \
-            "$E2E_DIR"/node/*.json "$E2E_DIR"/ontology/*.json
+            "$E2E_DIR"/node/*.json "$E2E_DIR"/ontology/*.json "$E2E_DIR"/rag/*.json
+          # RAG stage: every document the manifest names exists, and none carries an invisible or
+          # reordering character (core quarantines even a trusted document for one, docs/rag.md).
+          python3 - "$E2E_DIR" <<'EOF'
+          import json, os, re, sys
+          d = sys.argv[1]
+          m = json.load(open(os.path.join(d, "rag", "documents.json"), encoding="utf-8"))
+          hidden = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f"
+                              "\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]")
+          for doc in m["documents"]:
+              text = open(os.path.join(d, "rag", doc["file"]), encoding="utf-8").read()
+              if hidden.search(text):
+                  sys.exit(f"::error::{doc['file']} carries a hidden character")
+          ids = [doc["doc_id"] for doc in m["documents"]]
+          assert len(ids) == len(set(ids)), "duplicate doc_id"
+          assert all(r["expect_doc"] in ids for r in m["requests"]), "a request expects an unknown document"
+          EOF
 
   shell:
     name: Shellcheck and Dockerfile check
