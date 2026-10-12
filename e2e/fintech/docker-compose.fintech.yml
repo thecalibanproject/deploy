@@ -1,0 +1,61 @@
+# Fintech support scenario: overlay on top of the shared e2e stack (compose/docker-compose.yml plus
+# e2e/health-triage/docker-compose.e2e.yml). Add it with one more `-f` wherever the shared stack is
+# brought up; see README.md in this directory, "What the shared stack needs".
+#
+#   caliban-e2e-fintech-mcp     Cedar Bank's refund system as an MCP server (mcp/bank_ops.py,
+#                               standard library only): the write tool the support-desk node calls
+#                               once a human approved it. Reads its key and writes its ledger in
+#                               $E2E_WORK_DIR/fintech (seed.py creates the key).
+#   caliban-e2e-fintech-model   Only with the profile `fintech-mock` (local runs without a GPU): the
+#                               scripted model of mock/model.py, logging what it receives to
+#                               $E2E_WORK_DIR/model-log/fintech-requests.jsonl.
+#
+# Both sit on the internal `backend` network: Caliban reaches the MCP server at
+# http://caliban-e2e-fintech-mcp:8000/mcp (a private address, which the tool egress rules allow).
+# Paths are absolute (E2E_DIR is e2e/health-triage, E2E_WORK_DIR its work directory), because compose
+# resolves relative paths against the first file's directory.
+
+x-fintech-python: &fintech-python
+  image: ${E2E_PYTHON_IMAGE:-python:3.11-slim}
+  user: "${E2E_UID:-1000}:${E2E_GID:-1000}"
+  read_only: true
+  networks: [backend]
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  caliban-e2e-fintech-mcp:
+    <<: *fintech-python
+    container_name: caliban-e2e-fintech-mcp
+    command: ["python3", "-u", "/e2e/fintech/mcp/bank_ops.py"]
+    environment:
+      BANK_OPS_PORT: "8000"
+      BANK_OPS_KEY_FILE: /work/fintech/bank-ops.key
+      BANK_OPS_LEDGER: /work/fintech/bank-ops-ledger.jsonl
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ${E2E_DIR:?run e2e.sh up}/../fintech/mcp:/e2e/fintech/mcp:ro
+      - ${E2E_WORK_DIR:?run e2e.sh up}/fintech:/work/fintech
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  caliban-e2e-fintech-model:
+    <<: *fintech-python
+    container_name: caliban-e2e-fintech-model
+    profiles: ["fintech-mock"]
+    command: ["python3", "-u", "/e2e/fintech/mock/model.py"]
+    environment:
+      MOCK_LOG: /log/fintech-requests.jsonl
+      MOCK_FOLLOW_INJECTIONS: ${FINTECH_MOCK_FOLLOW_INJECTIONS:-1}
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ${E2E_DIR:?run e2e.sh up}/../fintech/mock:/e2e/fintech/mock:ro
+      - ${E2E_WORK_DIR:?run e2e.sh up}/model-log:/log
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

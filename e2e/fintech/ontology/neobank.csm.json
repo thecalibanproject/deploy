@@ -1,0 +1,724 @@
+{
+ "datasource": "neobank",
+ "elements": [
+  {
+   "id": "Customer",
+   "name": "Customer",
+   "description": "A customer of the bank",
+   "synonyms": [
+    "client"
+   ],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "root",
+     "datasource": "neobank",
+     "collection": "customers"
+    },
+    "keys": [
+     "_id"
+    ]
+   }
+  },
+  {
+   "id": "Customer.customer_key",
+   "name": "Customer.customer_key",
+   "description": "Customer number (CUS-nnnn)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Customer",
+    "path": "_id",
+    "column": "customer_key",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Customer.full_name",
+   "name": "Customer.full_name",
+   "description": "Customer's full name",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Customer",
+    "path": "full_name",
+    "column": "full_name",
+    "data_type": "string",
+    "pii_class": "person_name"
+   }
+  },
+  {
+   "id": "Customer.customer_email",
+   "name": "Customer.customer_email",
+   "description": "Customer's e-mail address",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Customer",
+    "path": "email",
+    "column": "customer_email",
+    "data_type": "string",
+    "pii_class": "email"
+   }
+  },
+  {
+   "id": "Customer.customer_phone",
+   "name": "Customer.customer_phone",
+   "description": "Customer's phone number",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Customer",
+    "path": "phone",
+    "column": "customer_phone",
+    "data_type": "string",
+    "pii_class": "phone"
+   }
+  },
+  {
+   "id": "Customer.segment",
+   "name": "Customer.segment",
+   "description": "standard or premium",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Customer",
+    "path": "segment",
+    "column": "segment",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Customer.kyc_status",
+   "name": "Customer.kyc_status",
+   "description": "Identity verification state: verified or pending",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Customer",
+    "path": "kyc_status",
+    "column": "kyc_status",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Customer.joined_at",
+   "name": "Customer.joined_at",
+   "description": "When the customer opened their first account",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Customer",
+    "path": "joined_at",
+    "column": "joined_at",
+    "data_type": "timestamp"
+   }
+  },
+  {
+   "id": "Account",
+   "name": "Account",
+   "description": "A current account and its debit card",
+   "synonyms": [
+    "compte"
+   ],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "root",
+     "datasource": "neobank",
+     "collection": "accounts"
+    },
+    "keys": [
+     "_id"
+    ]
+   }
+  },
+  {
+   "id": "Account.account_id",
+   "name": "Account.account_id",
+   "description": "Account number (ACC-nnnn)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "_id",
+    "column": "account_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Account.customer_id",
+   "name": "Account.customer_id",
+   "description": "Customer number of the holder",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "customer_id",
+    "column": "account_customer_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Account.holder_name",
+   "name": "Account.holder_name",
+   "description": "Account holder's name",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "holder_name",
+    "column": "holder_name",
+    "data_type": "string",
+    "pii_class": "person_name"
+   }
+  },
+  {
+   "id": "Account.account_iban",
+   "name": "Account.account_iban",
+   "description": "IBAN of the account",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "iban",
+    "column": "account_iban",
+    "data_type": "string",
+    "pii_class": "iban"
+   }
+  },
+  {
+   "id": "Account.currency",
+   "name": "Account.currency",
+   "description": "Account currency (EUR)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "currency",
+    "column": "currency",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Account.balance",
+   "name": "Account.balance",
+   "description": "Current balance",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "balance",
+    "column": "balance",
+    "data_type": "number",
+    "unit": "EUR"
+   }
+  },
+  {
+   "id": "Account.account_status",
+   "name": "Account.account_status",
+   "description": "active, frozen or closed",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "status",
+    "column": "account_status",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Account.product",
+   "name": "Account.product",
+   "description": "current or savings",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "product",
+    "column": "product",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Account.card_last4",
+   "name": "Account.card_last4",
+   "description": "Last four digits of the account's debit card",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "card.last4",
+    "column": "card_last4",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Account.card_status",
+   "name": "Account.card_status",
+   "description": "active, blocked or expired",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "card.status",
+    "column": "card_status",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Account.card_network",
+   "name": "Account.card_network",
+   "description": "visa or mastercard",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Account",
+    "path": "card.network",
+    "column": "card_network",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction",
+   "name": "Transaction",
+   "description": "A booked transaction on an account",
+   "synonyms": [
+    "opération",
+    "payment",
+    "charge"
+   ],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "root",
+     "datasource": "neobank",
+     "collection": "transactions"
+    },
+    "keys": [
+     "_id"
+    ]
+   }
+  },
+  {
+   "id": "Transaction.tx_id",
+   "name": "Transaction.tx_id",
+   "description": "Transaction id (TX-nnnnn)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "_id",
+    "column": "tx_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.tx_customer_id",
+   "name": "Transaction.tx_customer_id",
+   "description": "Customer number of the account holder",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "customer_id",
+    "column": "tx_customer_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.tx_account_id",
+   "name": "Transaction.tx_account_id",
+   "description": "Account the transaction is booked on",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "account_id",
+    "column": "tx_account_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.booked_at",
+   "name": "Transaction.booked_at",
+   "description": "Booking time (UTC)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "booked_at",
+    "column": "booked_at",
+    "data_type": "timestamp"
+   }
+  },
+  {
+   "id": "Transaction.merchant",
+   "name": "Transaction.merchant",
+   "description": "Merchant or counterparty name",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "merchant",
+    "column": "merchant",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.category",
+   "name": "Transaction.category",
+   "description": "Spending category",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "category",
+    "column": "category",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.amount",
+   "name": "Transaction.amount",
+   "description": "Amount; negative for a debit",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "amount",
+    "column": "amount",
+    "data_type": "number",
+    "unit": "EUR"
+   }
+  },
+  {
+   "id": "Transaction.tx_currency",
+   "name": "Transaction.tx_currency",
+   "description": "Transaction currency",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "currency",
+    "column": "tx_currency",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.channel",
+   "name": "Transaction.channel",
+   "description": "card, transfer or fee",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "channel",
+    "column": "channel",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.tx_status",
+   "name": "Transaction.tx_status",
+   "description": "booked, pending or reversed",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "status",
+    "column": "tx_status",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.reference",
+   "name": "Transaction.reference",
+   "description": "Statement reference from the merchant (free text)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "reference",
+    "column": "reference",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Transaction.tx_card_last4",
+   "name": "Transaction.tx_card_last4",
+   "description": "Last four digits of the card used",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.9,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Transaction",
+    "path": "card_last4",
+    "column": "tx_card_last4",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "account_count",
+   "name": "account_count",
+   "description": "Number of accounts",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "llm",
+   "confidence": 0.8,
+   "kind": "metric",
+   "spec": {
+    "grain": "Account",
+    "aggregation": "count",
+    "expr": {
+     "op": "rows"
+    }
+   }
+  },
+  {
+   "id": "tx_count",
+   "name": "tx_count",
+   "description": "Number of transactions",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "llm",
+   "confidence": 0.8,
+   "kind": "metric",
+   "spec": {
+    "grain": "Transaction",
+    "aggregation": "count",
+    "expr": {
+     "op": "rows"
+    }
+   }
+  },
+  {
+   "id": "net_amount",
+   "name": "net_amount",
+   "description": "Sum of transaction amounts (credits minus debits), EUR",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "llm",
+   "confidence": 0.8,
+   "kind": "metric",
+   "spec": {
+    "grain": "Transaction",
+    "aggregation": "sum",
+    "expr": {
+     "op": "attr",
+     "id": "Transaction.amount"
+    }
+   }
+  },
+  {
+   "id": "card_spend",
+   "name": "card_spend",
+   "description": "Card spending (negative), EUR",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "llm",
+   "confidence": 0.8,
+   "kind": "metric",
+   "spec": {
+    "grain": "Transaction",
+    "aggregation": "sum",
+    "expr": {
+     "op": "attr",
+     "id": "Transaction.amount"
+    },
+    "filters": [
+     {
+      "attr": "Transaction.channel",
+      "op": "eq",
+      "value": {
+       "type": "string",
+       "v": "card"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "rel.transaction_account",
+   "name": "rel.transaction_account",
+   "description": "Each transaction is booked on one account (value overlap 1.0)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.97,
+   "kind": "relation",
+   "spec": {
+    "from": "Transaction",
+    "to": "Account",
+    "cardinality": "many_to_one",
+    "local_path": "account_id",
+    "local_column": "tx_account_id",
+    "foreign_path": "_id",
+    "foreign_column": "account_id",
+    "verified": true,
+    "foreign_indexed": true
+   }
+  },
+  {
+   "id": "rel.account_customer",
+   "name": "rel.account_customer",
+   "description": "Each account belongs to one customer (value overlap 1.0)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "introspect",
+   "confidence": 0.97,
+   "kind": "relation",
+   "spec": {
+    "from": "Account",
+    "to": "Customer",
+    "cardinality": "many_to_one",
+    "local_path": "customer_id",
+    "local_column": "account_customer_id",
+    "foreign_path": "_id",
+    "foreign_column": "customer_key",
+    "verified": true,
+    "foreign_indexed": true
+   }
+  },
+  {
+   "id": "glossary.duplicate_charge",
+   "name": "glossary.duplicate_charge",
+   "description": "'duplicate charge' means two transactions with the same merchant, amount and day",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "llm",
+   "confidence": 0.7,
+   "kind": "glossary_term",
+   "spec": {
+    "phrase": "duplicate charge",
+    "maps_to": "Transaction.merchant"
+   }
+  },
+  {
+   "id": "glossary.chargeback",
+   "name": "glossary.chargeback",
+   "description": "'chargeback' is a card dispute that reverses a transaction",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "llm",
+   "confidence": 0.7,
+   "kind": "glossary_term",
+   "spec": {
+    "phrase": "chargeback",
+    "maps_to": "Transaction.tx_status"
+   }
+  },
+  {
+   "id": "glossary.prelevement",
+   "name": "glossary.prelevement",
+   "description": "'prélèvement' (French) is a direct debit",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "llm",
+   "confidence": 0.7,
+   "kind": "glossary_term",
+   "spec": {
+    "phrase": "prélèvement",
+    "maps_to": "Transaction.channel"
+   }
+  }
+ ]
+}
