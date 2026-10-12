@@ -5,18 +5,18 @@ Idempotent where the API allows it: re-running reuses the tenant, model, datasou
 ontology, and creates a new node version only when the rendered spec changed.
 
 Steps: the chat model (provider + catalogue entry), the tenant (PII mask, its own PII patterns,
-spend caps), its routes, an application API key, the MongoDB datasource, its ontology (proposed,
-then approved one element at a time), the triage node (draft, published without promotion), its
-golden set and promotion bar, the golden and injection evals, the gate, the promotion, and the
-`triage` intent mapped to node/triage@published for caliban/auto. With E2E_RAG=1, then the RAG
-stage (lib/rag.py): the document collection, its ingest and indexing, the `careguide` node and its
-API key.
+spend caps), its routes, an application API key, the MongoDB datasource and its introspection, the
+ontology (introspection's proposals and the curated CSM, reviewed in one batch), the triage node
+(draft, published without promotion), its golden set and promotion bar, the golden and injection
+evals, the gate, the promotion, and the `triage` intent mapped to node/triage@published for
+caliban/auto. With E2E_RAG=1, then the RAG stage (lib/rag.py): the document collection, its ingest
+and indexing, the `careguide` node and its API key.
 
-One step cannot use the public API: core has no endpoint that writes proposed ontology elements
-(POST /api/v1/datasources/{id}/introspect only marks the datasource `introspecting`, see
-crates/caliban-cp/src/lib.rs introspect_datasource). The script writes the proposals the way the
-store does (one ontology commit, crates/caliban-cp/src/store/postgres.rs ontology_commit) with psql,
-restarts Caliban so the store reloads, and approves every element through the public review API.
+The ontology goes through the public API only (core docs/datasources.md): introspection proposes
+what it infers from the replica set, the curated CSM (ontology/health.csm.json: the e2e's names,
+the metrics, the relation, the glossary) is proposed over it with POST
+/api/v1/tenants/{t}/ontology/proposals, and one review batch approves the CSM's elements and
+rejects introspection's other proposals: one ontology version.
 """
 import copy
 import json
@@ -25,8 +25,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import (HERE, TENANT, HttpError, compose, cp, info, load_state, q, save_state,  # noqa: E402
-                    step, wait_healthy, wait_until)
+from common import (HERE, TENANT, HttpError, cp, info, load_state, save_state, step,  # noqa: E402
+                    wait_healthy, wait_until)
 import rag  # noqa: E402  (the optional RAG stage, E2E_RAG=1)
 
 CHAT_ID = os.environ.get("E2E_CHAT_MODEL_ID", "e2e/chat")
@@ -113,52 +113,80 @@ def datasource(st):
                                                 "connection": {"uri": uri, "database": "marketplace"}}).body
         st["datasource_id"] = d["id"]
         info(f"health: created {d['id']}; stored connection {json.dumps(d['connection'])}")
-    r = cp("POST", f"/api/v1/datasources/{st['datasource_id']}/introspect", ok=None)
-    info(f"introspect -> {r.status} {json.dumps(r.body)} (core: no job runs yet; proposals come next)")
+    introspect(st)
 
 
-def sql_literal(s):
-    return "'" + s.replace("'", "''") + "'"
+def introspect(st):
+    """Introspection (core docs/datasources.md): samples the collections through the reader and
+    writes what it infers as proposed elements. A re-run skips every element already reviewed. A
+    failed or timed-out job is reported; the curated CSM proposed next is enough on its own."""
+    ds = st["datasource_id"]
+    r = cp("POST", f"/api/v1/datasources/{ds}/introspect", ok=None)
+    if r.status not in (202, 409):
+        info(f"introspect -> {r.status} {json.dumps(r.body)[:300]}; going on with the curated CSM only")
+        st["introspection"] = {"status": f"HTTP {r.status}"}
+        return
+    info(f"introspect -> {r.status} ({'started' if r.status == 202 else 'one is running already'})")
+    timeout = int(os.environ.get("E2E_INTROSPECT_TIMEOUT_S", "300"))
+    try:
+        job = wait_until("the introspection job", lambda: (lambda j: j if j.get("status") != "running" else None)(
+            cp("GET", f"/api/v1/datasources/{ds}/introspection").body), timeout=timeout, every=2)
+    except TimeoutError as e:
+        info(f"{e}; going on with the curated CSM only")
+        st["introspection"] = {"status": "timeout"}
+        return
+    st["introspection"] = {k: job.get(k) for k in ("id", "status", "objects", "proposed", "skipped", "version", "error")}
+    info(f"introspection {job.get('status')}: {job.get('objects')} collections, {job.get('proposed')} proposed, "
+         f"{job.get('skipped')} skipped (already reviewed or unchanged), version {job.get('version')}"
+         + (f", error {job['error']}" if job.get("error") else ""))
+
+
+def covers(current, wanted):
+    """Whether a stored value says what the file says (keys the file leaves out may be filled in)."""
+    if isinstance(wanted, dict):
+        return isinstance(current, dict) and all(covers(current.get(k), v) for k, v in wanted.items())
+    return current == wanted
 
 
 def ontology(st):
-    step("Ontology (CSM): proposals, review, approved version")
-    onto = cp("GET", f"/api/v1/ontology?tenant_id={TENANT}").body
+    step("Ontology (CSM): introspection, curated proposals, one review batch")
+    path = f"/api/v1/tenants/{TENANT}/ontology"
     with open(os.path.join(HERE, "ontology", "health.csm.json"), encoding="utf-8") as f:
         csm = json.load(f)
-    if not onto["elements"]:
-        info(f"writing {len(csm['elements'])} proposed elements as one ontology commit (psql; no public API)")
-        stmts = ["BEGIN;",
-                 "INSERT INTO ontology_commit (tenant_id, parent_id, author, message) VALUES "
-                 f"({sql_literal(TENANT)}, NULL, 'e2e-introspection', 'ontology.propose (e2e health triage)');"]
-        for e in csm["elements"]:
-            stmts.append(
-                "INSERT INTO ontology_element (tenant_id, id, commit_id, kind, name, status, provenance, confidence, body) "
-                f"VALUES ({sql_literal(TENANT)}, {sql_literal(e['id'])}, currval('ontology_commit_id_seq'), "
-                f"{sql_literal(e['kind'])}, {sql_literal(e['name'])}, 'proposed', {sql_literal(e['provenance'])}, "
-                f"{e['confidence']}, {sql_literal(json.dumps(e, ensure_ascii=False))}::jsonb);")
-        stmts.append("INSERT INTO ontology_head (tenant_id, commit_id) VALUES "
-                     f"({sql_literal(TENANT)}, currval('ontology_commit_id_seq')) "
-                     "ON CONFLICT (tenant_id) DO UPDATE SET commit_id = EXCLUDED.commit_id, published_at = now();")
-        stmts.append("COMMIT;")
-        compose("exec", "-T", "postgres", "psql", "-q", "-v", "ON_ERROR_STOP=1", "-U", "caliban", "-d", "caliban",
-                input_text="\n".join(stmts))
-        info("restarting caliban so the store reloads the ontology")
-        compose("restart", "caliban")
-        time.sleep(2)
-        wait_healthy()
-        onto = cp("GET", f"/api/v1/ontology?tenant_id={TENANT}").body
+    curated = {e["id"]: e for e in csm["elements"]}
+    onto = cp("GET", path).body
+    current = {e["id"]: e for e in onto["elements"]}
+    # Propose only what is not approved as the file says: proposing over an approved element
+    # withdraws it until it is approved again (and is refused while a published node queries it).
+    fresh = [e for i, e in curated.items()
+             if not (current.get(i, {}).get("status") == "approved"
+                     and current[i].get("kind") == e["kind"] and covers(current[i].get("spec"), e["spec"]))]
+    if fresh:
+        p = cp("POST", f"{path}/proposals", {"elements": fresh}).body
+        info(f"curated CSM: {p.get('proposed')} proposed, {p.get('skipped')} unchanged, version {p.get('version')}")
+    else:
+        info(f"curated CSM: all {len(curated)} elements approved already")
+    onto = cp("GET", path).body
+    before = onto["version"]
     pending = [e for e in onto["elements"] if e["status"] == "proposed"]
-    for e in pending:
-        cp("POST", f"/api/v1/ontology/elements/{q(e['id'])}/review",
-           {"decision": "approve", "note": "e2e: reviewed against the synthetic marketplace schema"})
-    onto = cp("GET", f"/api/v1/ontology?tenant_id={TENANT}").body
+    decisions = [{"id": e["id"], "decision": "approve" if e["id"] in curated else "reject"} for e in pending]
+    if decisions:
+        r = cp("POST", f"{path}/review", {"decisions": decisions,
+                                         "note": "e2e: reviewed against the synthetic marketplace schema"}).body
+        n_ok = sum(1 for d in decisions if d["decision"] == "approve")
+        info(f"review batch: {n_ok} approved, {len(decisions) - n_ok} rejected (introspection's names the CSM "
+             f"does not use), version {before} -> {r['version']}")
+        st["review_batch"] = {"decisions": len(decisions), "from": before, "to": r["version"]}
+    onto = cp("GET", path).body
     approved = [e for e in onto["elements"] if e["status"] == "approved"]
+    missing = sorted(set(curated) - {e["id"] for e in approved})
+    if missing:
+        raise RuntimeError(f"curated elements not approved: {missing}")
     st["ontology_version"] = f"{TENANT}@{onto['version']}"
     by_kind = {}
     for e in approved:
         by_kind[e["kind"]] = by_kind.get(e["kind"], 0) + 1
-    info(f"approved {len(pending)} now, {len(approved)} in total {by_kind}; version {st['ontology_version']}")
+    info(f"{len(approved)} approved {by_kind}; version {st['ontology_version']}")
 
 
 def render_spec(st):

@@ -81,11 +81,18 @@ services, 300 slots) and profiling on both members.
 1. The chat model: a shared provider and a catalogue entry `e2e/chat` with prices.
 2. Tenant `medmarket` (PII mode `mask`, node spend caps), its default route to `e2e/chat`, and an
    application API key allowed to run `triage` only.
-3. Datasource `health` (MongoDB, the reader's credentials sealed by the control plane) and
-   `introspect`.
-4. The ontology: 51 CSM elements (5 entities with embedded `offers` and `departments`, 38
-   attributes, 4 metrics, a relation, glossary terms), proposed, then approved one by one
-   through `POST /api/v1/ontology/elements/{id}/review`.
+3. Datasource `health` (MongoDB, the reader's credentials sealed by the control plane) and its
+   introspection (`POST /api/v1/datasources/{id}/introspect`, then
+   `GET /api/v1/datasources/{id}/introspection` until the job ends): the control plane samples
+   the three collections through the reader and proposes the elements it infers.
+4. The ontology: the curated CSM, 51 elements (5 entities with embedded `offers` and
+   `departments`, 38 attributes, 4 metrics, a relation, glossary terms: the names the node's
+   queries use, and what introspection cannot infer), proposed over introspection's with
+   `POST /api/v1/tenants/medmarket/ontology/proposals` (elements already approved as the file
+   says are left out: proposing over them would withdraw them), then one review batch,
+   `POST /api/v1/tenants/medmarket/ontology/review`, that approves the CSM's elements and
+   rejects introspection's other proposals (its own names for the same paths): one ontology
+   version. A failed introspection is reported, and the CSM alone is enough.
 5. Node `triage` (below): draft, published without promotion, golden set (6 cases in en, fr and
    ar, two with a scripted human answer), promotion bar (pass^k at least 0.8 over k = 3, cost per
    success, p95 latency), golden and injection evals, the gate, the promotion.
