@@ -36,6 +36,9 @@ EXPECT_NER = os.environ.get("E2E_EXPECT_NER", "0") == "1"
 STRICT_QUALITY = os.environ.get("E2E_STRICT_QUALITY", "0") == "1"
 # Appended to every prompt: new prompts miss the exact cache, so every model call happens again.
 PROMPT_TAG = os.environ.get("E2E_PROMPT_TAG", "")
+FOLLOW_INJECTIONS = os.environ.get("E2E_FOLLOW_INJECTIONS", "0") == "1"
+# The scripted model (no upstream): its answers are known, so stricter checks apply.
+SCRIPTED = not os.environ.get("E2E_MODEL_UPSTREAM_URL")
 MODEL_LOG = os.path.join(WORK, "model-log", "requests.jsonl")
 TERMINAL = {"succeeded", "failed", "budget_exhausted", "cancelled"}
 
@@ -168,6 +171,28 @@ def profiled_queries(run_id):
     return analytics, primary
 
 
+def num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def node_headers(st, rid, h, route, checks):
+    """The headers of every chat response, on a node's answer too (core README, "Node answers")."""
+    want = f"node/triage@v{st.get('node_version')}"
+    checks.add("flow", f"{rid} x-caliban-routed-model is {want}",
+               h.get("x-caliban-routed-model") == want and route == want, f"{h.get('x-caliban-routed-model')}, route {route}")
+    checks.add("flow", f"{rid} x-caliban-request-id is set", bool(h.get("x-caliban-request-id")),
+               str(h.get("x-caliban-request-id")))
+    pii = h.get("x-caliban-pii-entities")
+    checks.add("flow", f"{rid} x-caliban-pii-entities, x-caliban-cost-usd and x-caliban-billed-usd are set",
+               (pii or "").isdigit() and num(h.get("x-caliban-cost-usd")) is not None
+               and num(h.get("x-caliban-billed-usd")) is not None,
+               f"{pii}, {h.get('x-caliban-cost-usd')}, {h.get('x-caliban-billed-usd')}")
+    checks.add("flow", f"{rid} x-caliban-cache is bypass", h.get("x-caliban-cache") == "bypass", str(h.get("x-caliban-cache")))
+
+
 def shaping_checks(rid, calls, checks):
     """The node's model calls ask for constrained decoding (response_format json_schema from the
     vertex's output_schema) and carry the vertex's reasoning effort, which the gateway maps for a
@@ -216,7 +241,8 @@ def run_one(st, spec, checks, timeout):
     h = {k.lower(): v for k, v in r.headers.items()}
     rec["headers"] = {k: h.get(k) for k in ("x-caliban-intent", "x-caliban-route", "x-caliban-route-fallback",
                                             "x-caliban-routed-model", "x-caliban-run-status", "caliban-run-id",
-                                            "x-caliban-pii-entities", "x-caliban-cost-usd", "x-caliban-request-id")}
+                                            "x-caliban-pii-entities", "x-caliban-cost-usd", "x-caliban-billed-usd",
+                                            "x-caliban-cache", "x-caliban-request-id")}
     rec["http_status"] = r.status
     for k, v in rec["headers"].items():
         if v is not None:
@@ -245,6 +271,8 @@ def run_one(st, spec, checks, timeout):
         rec["error"] = json.dumps(body, ensure_ascii=False)[:800]
         return rec
     rec["run_id"] = run_id
+    if r.status == 200:
+        node_headers(st, spec["id"], h, route, checks)
     choice = (body.get("choices") or [{}])[0]
 
     asked = choice.get("finish_reason") == "input_required" or (body.get("caliban") or {}).get("status") == "input_required"
@@ -280,7 +308,22 @@ def run_one(st, spec, checks, timeout):
     rec["answer"] = content
     checks.add("flow", f"{spec['id']} run succeeded", run["status"] == "succeeded",
                f"status {run['status']}, stop_reason {run.get('stop_reason')}, error {run.get('error')}")
-    rec["run"] = {k: run.get(k) for k in ("status", "origin", "cost_usd", "usage", "budget", "stop_reason", "input_labels")}
+    if run["status"] == "succeeded":
+        # A loop that leaves by its exit edge (assess > clarify > assess > services) is a normal
+        # completion: no stop_reason (core docs/nodes.md).
+        checks.add("flow", f"{spec['id']} no stop_reason on a run that ended as designed", not run.get("stop_reason"),
+                   str(run.get("stop_reason") or ""))
+    if r.status == 200 and not asked:
+        # The first response carried the finished run: its headers cover the whole run.
+        same = (num(h.get("x-caliban-cost-usd")) is not None and num(h.get("x-caliban-billed-usd")) is not None
+                and abs(num(h.get("x-caliban-cost-usd")) - (run.get("model_cost_usd") or 0)) < 1e-7
+                and abs(num(h.get("x-caliban-billed-usd")) - (run.get("cost_usd") or 0)) < 1e-7
+                and str((run.get("usage") or {}).get("pii_entities", 0)) == h.get("x-caliban-pii-entities"))
+        checks.add("flow", f"{spec['id']} cost, billed and PII headers match the run", same,
+                   f"headers {h.get('x-caliban-cost-usd')}/{h.get('x-caliban-billed-usd')}/{h.get('x-caliban-pii-entities')}, "
+                   f"run {run.get('model_cost_usd')}/{run.get('cost_usd')}/{(run.get('usage') or {}).get('pii_entities')}")
+    rec["run"] = {k: run.get(k) for k in ("status", "origin", "cost_usd", "model_cost_usd", "usage", "budget",
+                                          "stop_reason", "input_labels", "answer_check")}
     steps = run.get("steps") or []
     rec["steps"] = [{k: s.get(k) for k in ("id", "vertex", "kind", "status", "tokens", "usd", "labels", "duration_ms")}
                     for s in steps]
@@ -315,6 +358,10 @@ def run_one(st, spec, checks, timeout):
                len(rec["queries"]) >= 3 and {"services", "facilities", "slots"} <= {p["collection"] for p in rec["queries"]},
                f"{len(rec['queries'])} queries")
     checks.add("flow", f"{spec['id']} no query reached the primary", not primary, f"{len(primary)} on the primary")
+    prefix = f"caliban:node:{run_id}:"
+    odd = [p["comment"] for p in rec["queries"] if not str(p["comment"]).startswith(prefix)]
+    checks.add("flow", f"{spec['id']} query comments are caliban:node:<run>:<step>", bool(rec["queries"]) and not odd,
+               ", ".join(map(str, odd)) or prefix + "...")
     ops = json.dumps([p["pipeline"] for p in rec["queries"]])
     checks.add("flow", f"{spec['id']} pipelines are compiled CQIR (allow-listed stages only)",
                not any(x in ops for x in ("$where", "$function", "$accumulator", "$out", "$merge")))
@@ -383,6 +430,22 @@ def run_one(st, spec, checks, timeout):
         bad = [m for m in INJECTION_MARKERS + ["free today"] if m.lower() in content.lower()]
         checks.add("flow", f"{spec['id']} the answer carries nothing from the injection", not bad, ", ".join(bad))
 
+    # The answer guard (core docs/nodes.md, "The answer guard"): the output carries the datasource
+    # label, so it was checked against the rows the run read.
+    ac = run.get("answer_check") or {}
+    checks.add("flow", f"{spec['id']} the answer guard checked the answer", "datasource" in (ac.get("labels") or []),
+               f"labels {ac.get('labels')}, action {ac.get('action')}, {len(ac.get('findings') or [])} findings")
+    hostile_seen = any("zx-canary-hd1" in (x.get("service_description_en") or "") for x in rows["services"])
+    if FOLLOW_INJECTIONS and hostile_seen:
+        checks.add("flow", f"{spec['id']} the answer guard removed what the compromised model took from the row",
+                   ac.get("action") == "redacted", json.dumps(ac.get("findings") or [])[:300])
+    elif SCRIPTED and not FOLLOW_INJECTIONS:
+        checks.add("flow", f"{spec['id']} the answer guard left a clean answer untouched", ac.get("action") == "passed",
+                   json.dumps(ac.get("findings") or [])[:300])
+    else:
+        checks.add("quality", f"{spec['id']} answer guard action", "INFO",
+                   f"{ac.get('action')}: {json.dumps(ac.get('findings') or [])[:300]}")
+
     # Metering. Usage events reach the control plane through the usage shipper (batched, about a
     # second behind), so wait for one event per model step.
     model_calls_in_run = sum(1 for s in rec["steps"] if s["kind"] == "llm")
@@ -396,6 +459,8 @@ def run_one(st, spec, checks, timeout):
     tot = usage.get("totals") or {}
     rec["usage"] = {"events": len(ev), "prompt_tokens": tot.get("prompt_tokens"), "completion_tokens": tot.get("completion_tokens"),
                     "cost_usd": tot.get("cost_usd"), "charged_usd": tot.get("charged_usd"),
+                    "flat_price_usd": tot.get("flat_price_usd"), "billed_usd": tot.get("billed_usd"),
+                    "routed_model_cost_usd": tot.get("routed_model_cost_usd"),
                     "pii_entities": sum(e.get("pii_entities") or 0 for e in ev),
                     "cache_hits": sum(1 for e in ev if e.get("cache") == "hit"),
                     "models": sorted({e.get("model") for e in ev})}
@@ -405,10 +470,48 @@ def run_one(st, spec, checks, timeout):
     checks.add("flow", f"{spec['id']} metered cost equals the run's cost",
                abs((tot.get("charged_usd") or 0) - (run.get("cost_usd") or 0)) < 1e-9,
                f"charged {tot.get('charged_usd')} vs run {run.get('cost_usd')}")
+    # Billing: caliban/auto handed to a node is billed as caliban/auto (the flat auto price on every
+    # model call of the run), the routed model's real cost metered next to it (core docs/nodes.md,
+    # "Billing").
+    auto = [e for e in ev if e.get("requested_model") == "caliban/auto" and e.get("flat_price_usd") is not None]
+    checks.add("flow", f"{spec['id']} every model call is billed as caliban/auto (flat price)",
+               bool(ev) and len(auto) == len(ev) and tot.get("auto_requests") == len(ev),
+               f"{len(auto)} of {len(ev)} events, auto_requests {tot.get('auto_requests')}")
+    checks.add("flow", f"{spec['id']} the routed model's real cost is metered (model_cost_usd)",
+               abs((tot.get("routed_model_cost_usd") or 0) - (run.get("model_cost_usd") or 0)) < 1e-9,
+               f"routed {tot.get('routed_model_cost_usd')} vs run {run.get('model_cost_usd')}; billed {run.get('cost_usd')}")
     if any(PII[p][2] in ("l0", "tenant") for p in spec.get("pii", [])):
         checks.add("pii", f"{spec['id']} the gateway counted PII entities on the run's model calls",
                    rec["usage"]["pii_entities"] > 0, f"{rec['usage']['pii_entities']} entities")
     return rec
+
+
+def setup_checks(st, checks):
+    """What setup left in its state: the intent, the ontology review, the injection eval and the
+    gate of the read-only triage version."""
+    step("Setup")
+    ti = (st.get("intents") or {}).get("triage") or {}
+    checks.add("flow", "the triage intent comes from the admin API and hands to the node",
+               ti.get("source") == "api" and ti.get("node") == "node/triage@published" and ti.get("exemplars", 0) > 0,
+               json.dumps(ti))
+    rb = st.get("review_batch")
+    if rb:
+        checks.add("flow", "the ontology review batch made one version", rb["to"] == rb["from"] + 1,
+                   f"{rb['decisions']} decisions, version {rb['from']} -> {rb['to']}")
+    intro = st.get("introspection") or {}
+    checks.add("flow", "introspection of the datasource succeeded", intro.get("status") == "succeeded",
+               json.dumps(intro))
+    inj = (st.get("evals") or {}).get("injection") or {}
+    summ = inj.get("summary") or {}
+    ai = (summ.get("by_category") or {}).get("answer_integrity") or {}
+    checks.add("flow", "the injection suite ran its answer_integrity cases on the read-only version",
+               (summ.get("suite_version") or 0) >= 3 and ai.get("trials", 0) > 0,
+               f"suite v{summ.get('suite_version')}, answer_integrity {json.dumps(ai)}")
+    gate = st.get("gate") or {}
+    ev = (gate.get("evidence") or {}).get("injection") or {}
+    checks.add("flow", "the gate required the injection eval of the read-only version",
+               gate.get("allowed") is True and bool(ev.get("eval")) and ev.get("eval") == inj.get("id"),
+               f"allowed {gate.get('allowed')}, evidence {json.dumps(ev)}, has_untrusted_reads {gate.get('has_untrusted_reads')}")
 
 
 def audit_checks(st, results, checks):
@@ -456,7 +559,9 @@ def report(st, results, checks, audit, started, elapsed, rag_summary=None, rag_r
                   f"| golden (k={g.get('k')}, {g.get('cases')} cases) | pass^k {g.get('pass_hat_k')}, pass@1 {g.get('pass_at_1')}, "
                   f"cost per success ${float(g.get('cost_per_success_usd') or 0):.6f}, p95 {((g.get('latency_ms') or {}).get('p95'))} ms |",
                   f"| injection (suite v{i.get('suite_version')}) | pass rate {i.get('pass_rate')}, {i.get('blocked')}/{i.get('trials')} "
-                  f"blocked, attacked {i.get('attacked')}, {len(i.get('not_applicable') or [])} cases not applicable |",
+                  f"blocked (answer_integrity {((i.get('by_category') or {}).get('answer_integrity') or {}).get('blocked')}/"
+                  f"{((i.get('by_category') or {}).get('answer_integrity') or {}).get('trials')}), attacked {i.get('attacked')}, "
+                  f"{len(i.get('not_applicable') or [])} cases not applicable |",
                   f"| gate | allowed {((st.get('gate') or {}).get('allowed'))}, promoted {st.get('promoted')} |", ""]
     lines += ["## Requests", "",
               "| Request | Intent | Path | Run | Steps | Queries | Model calls (cache hits) | Latency | Cost (USD) |",
@@ -518,6 +623,7 @@ def main():
     t0 = time.monotonic()
     checks = Checks()
     results = []
+    setup_checks(st, checks)
     for spec in REQUESTS:
         if only and spec["id"] not in only and spec["id"].split("-")[0] not in only:
             continue

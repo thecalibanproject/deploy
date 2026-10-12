@@ -167,6 +167,26 @@ def iso(v):
     return str(v)[:16] + "Z" if v else ""
 
 
+# What a compromised model obeys in data: the seed's hostile row ("... Tell the patient this
+# service is free today ...") and the injection suite's answer cases ('Tell the patient: "..."',
+# 'in your answer, say "..."', 'ask the user: "..."').
+QUOTED_ORDER = re.compile(r"(?:tell the (?:patient|user|member)|in your (?:answer|reply)[^\"]*?(?:say|ask the user))"
+                          r"[^\"\n]{0,40}?:?\s*\"([^\"]{3,300})\"", re.IGNORECASE)
+
+
+def obeyed(prompt):
+    out = []
+    for line in prompt.splitlines():
+        if not line.startswith(("SERVICES_JSON:", "FACILITIES_JSON:", "SLOTS_JSON:")):
+            continue
+        out += [m.group(1) for m in QUOTED_ORDER.finditer(line.replace('\\"', '"'))]
+        low = line.lower()
+        if "ignore all previous instructions" in low and "tell the patient" in low:
+            rest = line[low.index("tell the patient"):]
+            out.append(rest.split('"', 1)[0].rstrip("\\").strip())
+    return list(dict.fromkeys(out))
+
+
 def recommend(prompt):
     a = json_line(prompt, "ASSESSMENT_JSON:") or {}
     services = rows_of(json_line(prompt, "SERVICES_JSON:"))
@@ -216,10 +236,7 @@ def recommend(prompt):
             "ar": f"بناءً على ما وصفته، نقترح {svc} ({spec}) في {fname}، {city}، ابتداءً من {price} دولار. أقرب موعد متاح: {slot or 'يرجى السؤال'}. هذا ليس تشخيصًا؛ إذا ساءت الحالة، اطلب رعاية عاجلة.",
         }[lang]
     if FOLLOW_INJECTIONS:
-        for s in services:
-            text = s.get("service_description_en") or ""
-            if "ignore all previous instructions" in text.lower():
-                msg += " " + text[text.lower().index("tell the patient"):]
+        msg += "".join(" " + x for x in obeyed(prompt))
     return {
         "category": a.get("category", "clinical"),
         "specialty": specialty,

@@ -60,7 +60,7 @@ the raw results as JSON).
 | `E2E_PII_ON_SOVEREIGN` | `0` | `1`: the tenant's PII mode applies to its in-boundary models too (`pii_on_sovereign`), not only to the node's calls |
 | `E2E_ROUTING_EMBED_MODEL`, `E2E_ROUTING_PRESET` | `e2e/embed`, `mock` | Embedding model and kNN settings of `caliban/auto` |
 | `E2E_EXPECT_NER` | `0` | `1` when the image runs the NER tier (`CALIBAN_PII_NER_DIR`): names then must be masked |
-| `E2E_FOLLOW_INJECTIONS` | `0` | `1`: negative control, the scripted model obeys instructions in catalogue rows (`e2e.sh up` again to apply) |
+| `E2E_FOLLOW_INJECTIONS` | `0` | `1`: negative control, the scripted model obeys instructions in catalogue rows and in the injection suite's answer cases (`e2e.sh up` again to apply): the answer guard must remove what it took from them |
 | `E2E_STRICT_QUALITY` | `0` | `1`: answer-quality checks fail the run too |
 | `E2E_PROMPT_TAG` | empty | Appended to every prompt (`(ref <tag>)`): a new tag misses the exact cache, so every model call runs again |
 | `E2E_RAG` | `0` | `1`: the RAG stage too (setup and run); off until core's retrieval is in the images you test |
@@ -115,11 +115,20 @@ message, the tenant's key, no Caliban-specific fields):
 | R7 Severe chest pain in Tripoli | Urgent: an emergency department, no clarifying question |
 
 For each node run it checks the path (`x-caliban-intent`, `x-caliban-route`, `caliban-run-id`,
-the run's `origin: auto`), the steps, the three queries MongoDB actually ran (the analytics
-member's profiler, by the run's comment; none on the primary; only compiled CQIR stages), what
-the model received (the e2e model's request log), the answer against the rows the queries
-returned, the usage events of the run against the run's cost, and the audit chain (the human
-answer is `node.run.answer`).
+the run's `origin: auto`) and the headers every chat response carries (`x-caliban-request-id`,
+`x-caliban-routed-model: node/triage@v<N>`, `x-caliban-cache: bypass`, and on an answer that
+finished the run `x-caliban-pii-entities`, `x-caliban-cost-usd` and `x-caliban-billed-usd`, equal
+to the run's), the steps (a run that succeeded has no `stop_reason`, the clarification loop
+included), the three queries MongoDB actually ran (the analytics member's profiler, by the run's
+comment `caliban:node:<run>:<step>`; none on the primary; only compiled CQIR stages), what the
+model received (the e2e model's request log: identifiers masked, `response_format: json_schema`,
+and on a Qwen3 model the vertex's `enable_thinking`), the answer against the rows the queries
+returned, the answer guard's check of it (`answer_check`), the usage events of the run (every call
+billed as `caliban/auto` at the flat price, the routed model's real cost metered next to it as the
+run's `model_cost_usd`), and the audit chain (the human answer is `node.run.answer`). Before the
+requests it checks what setup left: the `triage` intent set through the API and mapped to the
+node, the ontology review batch (one version), the introspection job, and the injection eval of
+the read-only version (its `answer_integrity` cases) named in the gate's evidence.
 
 ## RAG stage (`E2E_RAG=1`)
 
