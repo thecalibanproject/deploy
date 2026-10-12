@@ -17,6 +17,7 @@ import glob
 import json
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORK = os.environ.get("E2E_WORK_DIR") or os.path.join(os.path.dirname(HERE), "health-triage", ".work")
@@ -55,6 +56,23 @@ def append(scenario, record):
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, f"{scenario}-telemetry.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def rotate(scenario):
+    """Starts a scenario's telemetry fresh: an earlier recording's records move to
+    $DEMO_OUT/history/<scenario>-telemetry-<UTC time>.jsonl, out of the report."""
+    path = os.path.join(OUT, f"{scenario}-telemetry.jsonl")
+    if not os.path.exists(path):
+        return None
+    os.makedirs(os.path.join(OUT, "history"), exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(os.path.getmtime(path)))
+    dest = os.path.join(OUT, "history", f"{scenario}-telemetry-{stamp}.jsonl")
+    n = 1
+    while os.path.exists(dest):
+        n += 1
+        dest = os.path.join(OUT, "history", f"{scenario}-telemetry-{stamp}-{n}.jsonl")
+    os.replace(path, dest)
+    return dest
 
 
 def load(scenario):

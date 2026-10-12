@@ -61,7 +61,8 @@ def tenant(ctx):
 The runner signs in before the first chapter (the sign-in is recorded) and records each chapter
 as a timeline chapter named by its key. A chapter that raises stops the scenario: the failure is
 in the timeline (`failed`), a screenshot `zz-failure.png` is taken, the video is kept, and the
-runner reports it.
+runner reports it. Each recording starts with the scenario's screenshots and timeline removed, so a
+failure shot only ever comes from that recording, and a recording that took one fails (non-zero exit).
 
 ### `Ctx` (e2e/demo/framework.py)
 
@@ -164,6 +165,7 @@ Outputs in `$E2E_WORK_DIR/demo/` (`e2e/health-triage/.work/demo/` by default):
 | `term/*.mp4`, `term/*.cast` | Terminal segments (`infra-up`, `check-<scenario>`), replayable casts |
 | `<scenario>.mp4` | Per scenario: its title card, its console walkthrough, its checks |
 | `<scenario>-telemetry.jsonl` | Every data-plane call's timings, node runs' step durations, eval latencies |
+| `history/<scenario>-telemetry-<UTC time>.jsonl` | An earlier recording's telemetry: each recording starts its scenario's telemetry fresh, and the report reads the current files only |
 | `telemetry.md`, `telemetry.csv`, `telemetry.json` | The combined telemetry report |
 | `caliban-demo.mp4` | Everything: title, the gateway host, every scenario, the telemetry segment, end card; chapter markers per part and per chapter |
 

@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -522,6 +523,13 @@ def list_scenarios():
 def record(pw, name, headed=False, only=None):
     mod = load_scenario(name)
     os.makedirs(OUT, exist_ok=True)
+    # Every recording starts fresh: this scenario's telemetry of an earlier recording moves to
+    # history/, and its screenshots (a failure shot among them) and timeline are removed.
+    telemetry.rotate(mod.NAME)
+    shutil.rmtree(os.path.join(OUT, "shots", mod.NAME), ignore_errors=True)
+    for stale in (f"{mod.NAME}.timeline.json", f"{mod.NAME}.webm"):
+        if os.path.exists(os.path.join(OUT, stale)):
+            os.remove(os.path.join(OUT, stale))
     with open(os.path.join(DEMO_DIR, "overlay.js"), encoding="utf-8") as f:
         overlay = f.read()
     browser = pw.chromium.launch(headless=not headed, slow_mo=SLOWMO)
@@ -564,9 +572,11 @@ def record(pw, name, headed=False, only=None):
             os.replace(path, os.path.join(OUT, f"{mod.NAME}.webm"))
         browser.close()
     print(f"{name}: {os.path.join(OUT, mod.NAME + '.webm')}"
-          + (f"; console steps done through the admin API: "
+          + ("; console steps done through the admin API: "
              + "; ".join(f"{s['chapter']}: {s['what']}" for s in ctx.timeline['api_steps'])
              if ctx.timeline["api_steps"] else ""), flush=True)
+    if failed is None and os.path.exists(os.path.join(ctx.shots, "zz-failure.png")):
+        failed = "a failure screenshot was taken"
     return failed is None
 
 
