@@ -17,7 +17,7 @@ patient records; the identifiers in the test prompts are invented.
 e2e/health-triage/
 ├── e2e.sh                   up | setup | run | all | down | status | logs
 ├── docker-compose.e2e.yml   overlay: MongoDB replica set, the e2e model, the rendered config
-├── config/exemplars.toml    caliban/auto exemplars of the `triage` intent (en, fr, ar)
+├── config/exemplars.json    caliban/auto exemplars of the `triage` intent (en, fr, ar), set by setup
 ├── seed/                    replica set and users (mongosh), the synthetic marketplace
 ├── ontology/health.csm.json the CSM for the three collections (51 elements, proposed)
 ├── node/triage.node.json    the triage node (workflow), golden.json its golden set
@@ -71,7 +71,7 @@ the raw results as JSON).
 ## What it does
 
 **`up`**: the stack with the rendered config (the stack's own `caliban.toml`, plus a `[routing]`
-table and the tenant's `triage` exemplars), a MongoDB 8.0 replica set `rs0` (primary, and an
+table: `caliban/auto`'s embedder and kNN settings), a MongoDB 8.0 replica set `rs0` (primary, and an
 analytics secondary tagged `workload=analytics`, which is where Caliban's native lane reads), the
 read-only user `caliban_reader` (role `read` on `marketplace`), the seed (6 facilities, 9
 services, 300 slots) and profiling on both members.
@@ -96,7 +96,10 @@ services, 300 slots) and profiling on both members.
 5. Node `triage` (below): draft, published without promotion, golden set (6 cases in en, fr and
    ar, two with a scripted human answer), promotion bar (pass^k at least 0.8 over k = 3, cost per
    success, p95 latency), golden and injection evals, the gate, the promotion.
-6. `PATCH /api/v1/tenants/medmarket {"node_routes": {"triage": "node/triage@published"}}`.
+6. The `triage` intent of `caliban/auto`, at runtime: its exemplars (`config/exemplars.json`) with
+   `PUT /api/v1/tenants/medmarket/intents/triage`, then
+   `PATCH /api/v1/tenants/medmarket {"node_routes": {"triage": "node/triage@published"}}`; routers
+   rebuild their kNN index with the next snapshot, no config edit and no restart.
 
 **`run`**: seven requests through `caliban/auto`, exactly as a customer app sends them (one user
 message, the tenant's key, no Caliban-specific fields):

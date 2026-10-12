@@ -2,7 +2,7 @@
 # Health triage end-to-end test of the whole product flow (see README.md in this directory).
 #
 #   e2e/health-triage/e2e.sh up       # stack + MongoDB replica set + synthetic seed + model
-#   e2e/health-triage/e2e.sh setup    # tenant, key, datasource, ontology, node, evals, gate, intent
+#   e2e/health-triage/e2e.sh setup    # tenant, key, datasource, ontology, node, evals, gate, intent (admin API)
 #   e2e/health-triage/e2e.sh run      # end-to-end requests through caliban/auto, report
 #   E2E_RAG=1 e2e/health-triage/e2e.sh setup | run | all   # plus the optional RAG stage (off by default)
 #   e2e/health-triage/e2e.sh all      # up, setup, run
@@ -142,12 +142,12 @@ EOF
   export E2E_COMPOSE_CMD; E2E_COMPOSE_CMD="$(printf '%q ' docker compose -p "$E2E_PROJECT" --env-file "$E2E_STACK_ENV" "${FILES[@]}")"
 }
 
-# The stack's own config plus the e2e [routing] table and the tenant's exemplars. Core keeps
-# tenant exemplars in the config file only (README.md, "Gaps in core").
+# The stack's own config plus the e2e [routing] table (caliban/auto's embedder and kNN settings).
+# The tenant's intents and exemplars are not in it: setup sets them through the admin API.
 render_config() {
   [[ -f "$E2E_BASE_CONFIG" ]] || die "base config $E2E_BASE_CONFIG not found"
   if grep -qE '^\[routing(\.|\])' "$E2E_BASE_CONFIG"; then
-    die "$E2E_BASE_CONFIG already has a [routing] table; merge config/exemplars.toml into it by hand"
+    die "$E2E_BASE_CONFIG already has a [routing] table; add the e2e's [routing] settings to it by hand"
   fi
   local out="$E2E_WORK_DIR/caliban.toml"
   {
@@ -184,8 +184,6 @@ EOF
     esac
     echo "auto_price_in_per_mtok = 3.0"
     echo "auto_price_out_per_mtok = 12.0"
-    echo
-    sed "s/^\[routing\.tenants\.medmarket\./[routing.tenants.$E2E_TENANT./" "$E2E_DIR/config/exemplars.toml"
     if [[ "$E2E_ROUTING_PRESET" == mock ]]; then
       cat <<'EOF'
 

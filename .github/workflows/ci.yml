@@ -418,7 +418,7 @@ jobs:
           done
           python3 -m py_compile "$E2E_DIR"/lib/*.py "$E2E_DIR"/mock/model.py
           python3 -c 'import json, sys; [json.load(open(f, encoding="utf-8")) for f in sys.argv[1:]]' \
-            "$E2E_DIR"/node/*.json "$E2E_DIR"/ontology/*.json "$E2E_DIR"/rag/*.json
+            "$E2E_DIR"/config/*.json "$E2E_DIR"/node/*.json "$E2E_DIR"/ontology/*.json "$E2E_DIR"/rag/*.json
           # RAG stage: every document the manifest names exists, and none carries an invisible or
           # reordering character (core quarantines even a trusted document for one, docs/rag.md).
           python3 - "$E2E_DIR" <<'EOF'

@@ -49,7 +49,7 @@ What `E2E_TARGET=testbed` sets (override any of them in the environment):
 | Setting | Value |
 |---|---|
 | Compose | project `caliban`, `compose/docker-compose.yml` + `/opt/caliban-testbed/compose.testbed-gateway.yml` + the e2e overlay, env file `compose/.env` |
-| Config | `/opt/caliban-testbed/caliban.toml` plus the e2e `[routing]` table (Qwen3-Embedding instruction prefix and thresholds from core's `open-models.example.toml`) and the tenant's exemplars |
+| Config | `/opt/caliban-testbed/caliban.toml` plus the e2e `[routing]` table (Qwen3-Embedding instruction prefix and thresholds from core's `open-models.example.toml`); the tenant's `triage` exemplars are set by `setup` through the admin API |
 | Chat model | `e2e/chat` = `Qwen/Qwen3.8-27B-FP8`, family `qwen3.8`, through the recorder (`caliban-e2e-model`) to `http://$GPU_IP:8000/v1`, registered `t0_sovereign`; the node's `guardrails.pii: mask` masks identifiers on its calls |
 | Routing embedder | `local/qwen3-embedding-0.6b` (the stack's TEI on the GPU host) |
 | Evals | golden p95 bar 300 s, eval timeout 1 h: Qwen3.8 thinks before every node call, core sends no reasoning setting with them |

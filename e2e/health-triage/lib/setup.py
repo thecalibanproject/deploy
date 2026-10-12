@@ -25,7 +25,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import (HERE, TENANT, HttpError, cp, info, load_state, save_state, step,  # noqa: E402
+from common import (HERE, TENANT, HttpError, cp, info, load_state, q, save_state, step,  # noqa: E402
                     wait_healthy, wait_until)
 import rag  # noqa: E402  (the optional RAG stage, E2E_RAG=1)
 
@@ -276,11 +276,23 @@ def gate_and_promote(st):
 
 
 def intent(st):
-    step("caliban/auto: intent triage -> node/triage@published")
+    """The tenant's caliban/auto intents through the admin API (core docs/nodes.md, "caliban/auto
+    and nodes"): the exemplars, then the mapping to the node. Routers rebuild their kNN index with
+    the snapshot that carries them, without a restart."""
+    step("caliban/auto: intent triage (exemplars) -> node/triage@published")
+    with open(os.path.join(HERE, "config", "exemplars.json"), encoding="utf-8") as f:
+        intents = json.load(f)["intents"]
+    for name, exemplars in intents.items():
+        r = cp("PUT", f"/api/v1/tenants/{TENANT}/intents/{q(name)}", {"exemplars": exemplars}).body
+        info(f"intent {name}: {len(r.get('exemplars') or [])} exemplars (source {r.get('source')})")
     t = cp("PATCH", f"/api/v1/tenants/{TENANT}", {"node_routes": {"triage": f"node/{NODE}@published"}}).body
     info(f"node_routes: {t.get('node_routes')}")
-    # The data plane applies the change with its next snapshot.
-    time.sleep(3)
+    listed = cp("GET", f"/api/v1/tenants/{TENANT}/intents").body
+    st["intents"] = {i["intent"]: {"exemplars": len(i.get("exemplars") or []), "source": i.get("source"),
+                                   "node": i.get("node")} for i in listed.get("intents") or []}
+    info(f"intents as routers see them: {json.dumps(st['intents'])}")
+    # Routers apply the change with their next snapshot (embedding the exemplars on the way).
+    time.sleep(int(os.environ.get("E2E_INTENT_SETTLE_S", "5")))
 
 
 def main():

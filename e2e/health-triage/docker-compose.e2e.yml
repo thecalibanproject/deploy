@@ -3,7 +3,7 @@
 # exports the E2E_* variables below; see README.md in this directory.
 #
 #   caliban                       runs with the rendered config (the stack's own config plus the
-#                                 e2e [routing] table and the tenant's triage exemplars)
+#                                 e2e [routing] table; the tenant's intents come from the admin API)
 #   caliban-e2e-mongo             MongoDB 8.0 replica set rs0, primary
 #   caliban-e2e-mongo-analytics   secondary, tag workload=analytics: Caliban's native lane reads
 #                                 from a tagged secondary, never from the primary

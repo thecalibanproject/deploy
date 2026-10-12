@@ -1,0 +1,28 @@
+{
+  "_comment": "Exemplars of the e2e tenant's caliban/auto intents (en, fr, ar), set by lib/setup.py with PUT /api/v1/tenants/{t}/intents/{intent}: routers pick them up with the next snapshot, without a config edit or a restart. The intent-to-node mapping (triage -> node/triage@published) is the tenant's node_routes. Synthetic utterances: no names, no identifiers.",
+  "intents": {
+    "triage": [
+      "I have chest pain since yesterday, where should I go",
+      "my child has a fever and a cough, which doctor should we see",
+      "my knee is swollen after a fall, I need an appointment",
+      "I have a skin rash that itches, can you recommend a clinic",
+      "I feel palpitations and short of breath, what should I do",
+      "which hospital has an emergency department open now",
+      "I am pregnant and need a check-up near me",
+      "I need to see a doctor about back pain this week",
+      "where should I go for a heart check-up",
+      "J'ai mal à la poitrine depuis hier, où dois-je consulter",
+      "mon fils a de la fièvre et tousse, quel médecin voir",
+      "j'ai une éruption sur la peau qui gratte, quelle clinique",
+      "je me suis fait mal au genou en tombant, je cherche un rendez-vous",
+      "j'ai des palpitations et je suis essoufflé",
+      "quel hôpital a des urgences ouvertes maintenant",
+      "عندي ألم في الصدر منذ أمس، إلى أين أذهب",
+      "ابني عنده حرارة وسعال، أي طبيب نراجع",
+      "عندي طفح جلدي وحكة، أريد عيادة قريبة",
+      "ركبتي متورمة بعد سقوط، أحتاج موعدا",
+      "أي مستشفى فيه طوارئ مفتوحة الآن",
+      "أنا حامل وأحتاج إلى فحص"
+    ]
+  }
+}
