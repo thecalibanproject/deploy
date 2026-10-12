@@ -30,6 +30,8 @@ DEPLOY_DIR="$(dirname "$E2E_ROOT")"
 E2E_SH="$E2E_ROOT/health-triage/e2e.sh"
 export E2E_WORK_DIR="${E2E_WORK_DIR:-$E2E_ROOT/health-triage/.work}"
 export DEMO_OUT="${DEMO_OUT:-$E2E_WORK_DIR/demo}"
+# The playwright Python package when the image lacks it (run-demo.sh pull installs it).
+export DEMO_PYLIB="${DEMO_PYLIB:-$E2E_WORK_DIR/demo-pylib}"
 # shellcheck source=e2e/demo/images.env
 . "$DEMO_DIR/images.env"
 export DEMO_PLAYWRIGHT_IMAGE DEMO_AGG_IMAGE DEMO_FFMPEG_IMAGE
@@ -77,6 +79,15 @@ pull() {
     log "pulling $img"
     docker pull -q "$img"
   done
+  # The image carries Chromium (/ms-playwright) but, in its current builds, not the Python package:
+  # install the matching playwright release once into DEMO_PYLIB, which pyrun puts on PYTHONPATH.
+  if ! docker run --rm "$DEMO_PLAYWRIGHT_IMAGE" python3 -c 'import playwright' 2>/dev/null; then
+    local version="${DEMO_PLAYWRIGHT_IMAGE##*:v}"; version="${version%%-*}"
+    log "installing playwright==$version into $DEMO_PYLIB"
+    mkdir -p "$DEMO_PYLIB"
+    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$DEMO_PYLIB:$DEMO_PYLIB" "$DEMO_PLAYWRIGHT_IMAGE" \
+      python3 -m pip install --quiet --disable-pip-version-check --target "$DEMO_PYLIB" "playwright==$version"
+  fi
 }
 
 fonts() {
@@ -103,6 +114,10 @@ pyrun() {
   local args=(--rm --init --ipc=host --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1
     -v "$DEPLOY_DIR:$DEPLOY_DIR:ro" -v "$E2E_WORK_DIR:$E2E_WORK_DIR" -w "$DEMO_DIR")
   [[ "$DEMO_OUT" == "$E2E_WORK_DIR"/* ]] || args+=(-v "$DEMO_OUT:$DEMO_OUT")
+  if [[ -d "$DEMO_PYLIB/playwright" ]]; then
+    [[ "$DEMO_PYLIB" == "$E2E_WORK_DIR"/* ]] || args+=(-v "$DEMO_PYLIB:$DEMO_PYLIB:ro")
+    args+=(-e "PYTHONPATH=$DEMO_PYLIB")
+  fi
   local name
   while IFS= read -r name; do
     case "$name" in
