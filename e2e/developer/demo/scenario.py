@@ -57,7 +57,9 @@ def snippet(path, start, count):
 def run(ctx, script, *args, label=None):
     """Runs an app script like the developer does; a failure stops the chapter with its output."""
     ctx.mark(f"app: python {script} {' '.join(args)}".strip())
-    code, out = dev.run_app(S, script, *args, api_key=S.get("api_key"))
+    # A script that sends many requests runs for a while: the stitch keeps its first and last seconds.
+    with ctx.idle(f"python {script} {' '.join(args)}".strip()):
+        code, out = dev.run_app(S, script, *args, api_key=S.get("api_key"))
     if code != 0:
         ctx.terminal(f"python {script}", [f"$ python {script} {' '.join(args)}"] + out.splitlines()[-25:])
         raise RuntimeError(f"app/{script} {' '.join(args)} exited {code}: {out[-800:]}")
@@ -178,6 +180,8 @@ def intents(ctx):
     soft(ctx, "intents table", lambda: ctx.point(ctx.page.get_by_role("table", name="Routing intents")))
     ctx.pause(2)
 
+    ctx.caption("caliban/auto", "The app sends fifteen prompts through caliban/auto, one after the other.",
+                stage="Route")
     out = run(ctx, "classify.py", "first")
     r = result("classify-first.json")
     S["first"] = r
