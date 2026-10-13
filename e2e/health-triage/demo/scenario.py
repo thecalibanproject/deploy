@@ -694,6 +694,10 @@ def send_chat(ctx, rid, title_suffix=""):
     spec = REQUESTS[rid]
     key = ST["api_key"]
     body = {"model": "caliban/auto", "messages": [{"role": "user", "content": spec["text"]}]}
+    if rid == "R2":
+        # A deterministic request (temperature 0) is what the exact cache serves again; a bound on the
+        # answer keeps the general model's reply short.
+        body.update({"temperature": 0, "max_tokens": 400})
     title = f"{spec['id']}: {spec['title']}{title_suffix}"
     rtl = rid == "R4"
     ctx.client_panel(title, body, None, None, None, pending="sending to Caliban…")
