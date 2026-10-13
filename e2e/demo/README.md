@@ -103,7 +103,7 @@ Console selectors: every form control is labelled (`page.get_by_label("Name")`),
 are `role=dialog` named by their title, tables are named (`get_by_role("table", name="Datasources")`),
 and forms have `aria-label`s (`get_by_role("form", name="Register datasource")`). Read the console's
 README for the pages and labels; the health scenario uses most of them. A newly minted API key is
-blurred in every recording (`[data-testid=plaintext-key]`).
+blurred in every recording (`[data-testid=plaintext-key]`, a rule of overlay.js on every page).
 
 ### Telemetry
 

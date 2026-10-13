@@ -125,6 +125,7 @@ def state():
 
 
 def key_and_first_call(ctx):
+    """An API key from the console, a first call with the SDK"""
     t = S["tenant"]
     ctx.caption("Get a key", f"The operator gave the developer a tenant, {t}. The key comes from the console.",
                 stage="Clear")
@@ -167,6 +168,7 @@ def key_and_first_call(ctx):
 
 
 def intents(ctx):
+    """Intents from code, fifteen prompts through caliban/auto"""
     t = S["tenant"]
     out = run(ctx, "intents.py", "define")
     ctx.caption("Intents", "Five intents with exemplars in English, French and Arabic, set through the SDK.",
@@ -214,6 +216,7 @@ def _probe(ctx, text, label):
 
 
 def misroute(ctx):
+    """A misroute, fixed at runtime with new exemplars"""
     first = S.get("first") or result("classify-first.json")
     bad = [x for x in first.get("results", []) if not x["ok"]]
     sales = [x for x in first.get("results", []) if x["expected"] == "sales"]
@@ -256,6 +259,7 @@ def misroute(ctx):
 
 
 def agents(ctx):
+    """Documents and five agents as code, published"""
     t = S["tenant"]
     out = run(ctx, "agents.py", "docs")
     ctx.caption("Agents as code", "docs-helper answers from the product docs: four Markdown pages into a "
@@ -290,6 +294,7 @@ def agents(ctx):
 
 
 def evals_and_gate(ctx):
+    """Evals, the gate and promotion, children first"""
     t = S["tenant"]
     ctx.caption("Evals", "Golden sets per node (k runs per case), the injection suite for the agent that "
                 "reads documents.", stage="Evals", clock=True)
@@ -330,6 +335,7 @@ def evals_and_gate(ctx):
 
 
 def orchestrator(ctx):
+    """One message, two problems: the orchestrator and its subagents"""
     t = S["tenant"]
     out = run(ctx, "support.py")
     st = state().get("support_run") or {}
@@ -373,6 +379,7 @@ def orchestrator(ctx):
 
 
 def usage(ctx):
+    """Usage per node and per intent, node spend"""
     t = S["tenant"]
     out = run(ctx, "usage.py")
     term(ctx, "app/usage.py", snippet("usage.py", r"u = raw\(adm", 2), "python usage.py", out, keep=40)

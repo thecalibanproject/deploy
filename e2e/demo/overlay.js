@@ -8,6 +8,7 @@
 (() => {
   if (window.__demo) return;
   const css = `
+[data-testid=plaintext-key] { filter: blur(7px) !important; }
 #__demo-root { position: fixed; inset: 0; pointer-events: none; z-index: 2147483000;
   font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Arabic", sans-serif; }
 #__demo-root * { box-sizing: border-box; }
