@@ -121,7 +121,7 @@ def wait_eval(adm, eid):
     eval is parsed."""
     deadline = time.monotonic() + EVAL_TIMEOUT_S
     while True:
-        body = raw(adm, "GET", f"/api/v1/tenants/{TENANT}/evals/{eid}")
+        body = raw(adm, "GET", f"tenants/{TENANT}/evals/{eid}")
         if body.get("status") in ("succeeded", "failed", "cancelled"):
             return adm.evals.get(TENANT, eid)
         if time.monotonic() >= deadline:
