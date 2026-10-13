@@ -79,7 +79,15 @@ def idle_cuts(timeline):
     for s in timeline.get("idle") or []:
         if s["end"] - s["start"] > MAX_IDLE:
             cuts.append((s["start"] + KEEP, s["end"] - KEEP))
-    return cuts
+    # Idle spans can nest (a script run inside a longer wait): merge overlapping cuts, so that no
+    # stretch of the recording is subtracted twice.
+    merged = []
+    for a, b in sorted(cuts):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
 
 
 def shift(t, cuts):
