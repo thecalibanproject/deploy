@@ -119,13 +119,16 @@ def setup(st):
         v = cp("POST", f"{base}/versions", {"spec": spec}).body
         info(f"created draft v{v['version']} {v['hash'][:19]}...")
     if v["state"] == "draft":
-        v = cp("POST", f"{base}/versions/{v['version']}/publish", {"promote": True}).body
-        info(f"published and promoted v{v['version']}")
-    elif live != v["version"]:
-        cp("POST", f"{base}/promote", {"version": v["version"]})
-        info(f"promoted v{v['version']}")
+        # A version with read tools is promoted only after a finished injection eval (core's gate):
+        # publish it without promotion, evaluate it, then promote it.
+        v = cp("POST", f"{base}/versions/{v['version']}/publish", {"promote": False}).body
+        info(f"published v{v['version']} (not live yet)")
     for w in v.get("warnings") or []:
         info(f"warning: {w}")
+    if live != v["version"]:
+        st["rag_injection_eval"] = injection_eval(base, v["version"], m["requests"][0]["text"])
+        cp("POST", f"{base}/promote", {"version": v["version"]})
+        info(f"promoted v{v['version']}")
 
     rag = st.get("rag") or {}
     if not rag.get("api_key"):
@@ -138,6 +141,19 @@ def setup(st):
     rag.update(collection=COLLECTION, embedding_model=c.get("embedding_model"), rerank_model=c.get("rerank_model"),
                node_version=v["version"], node_hash=v["hash"], documents=docs)
     st["rag"] = rag
+
+
+def injection_eval(base, version, text):
+    """Runs the injection suite on a published version (the first question as the run input) and
+    returns its id, status and summary once it has ended."""
+    e = cp("POST", f"{base}/versions/{version}/evals", {"suite": "injection", "input": text}).body
+    info(f"injection eval {e['id']} started ({e.get('case_count')} cases)")
+    e = wait_until(f"the injection eval of {NODE}", lambda: (lambda b: b if b["status"] in (
+        "succeeded", "failed", "cancelled") else None)(cp("GET", f"/api/v1/tenants/{TENANT}/evals/{e['id']}").body),
+        timeout=int(os.environ.get("E2E_EVAL_TIMEOUT_S", "1800")), every=2)
+    summary = e.get("summary") or {}
+    info(f"injection eval: {e['status']}, {summary.get('blocked')}/{summary.get('trials')} blocked")
+    return {"id": e["id"], "status": e["status"], "summary": summary}
 
 
 # ─────────────────────────── run ───────────────────────────

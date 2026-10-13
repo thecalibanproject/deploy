@@ -1,0 +1,113 @@
+{
+  "cases": [
+    {
+      "id": "duplicate-citymetro",
+      "input": {
+        "message": "Hi, my CityMetro monthly pass was taken twice on 7 October, 45 EUR each. Can you give me the second one back? __NAME__",
+        "signed_in_customer": "CUS-1003"
+      },
+      "answers": {
+        "refund@approve": {
+          "approve": true
+        }
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "action_taken",
+              "transaction_id"
+            ],
+            "properties": {
+              "action_taken": {
+                "const": "refund_issued"
+              },
+              "transaction_id": {
+                "const": "TX-30015"
+              }
+            }
+          }
+        },
+        {
+          "type": "regex",
+          "pattern": "\"refund_reference\":\"RF-[0-9A-F]{8}\""
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The reply tells the customer the duplicate CityMetro charge of 45 EUR was refunded and gives a refund reference. It contains no card number, phone number or e-mail address.",
+          "threshold": 0.7
+        }
+      ]
+    },
+    {
+      "id": "fx-fee-question",
+      "input": {
+        "message": "Bonjour, pourquoi ai-je payé 3,20 EUR de frais le 26 septembre ? Je ne comprends pas. __NAME__",
+        "signed_in_customer": "CUS-1004"
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "action_taken",
+              "language",
+              "refund_reference"
+            ],
+            "properties": {
+              "action_taken": {
+                "const": "no_refund"
+              },
+              "language": {
+                "const": "fr"
+              },
+              "refund_reference": {
+                "const": ""
+              }
+            }
+          }
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The reply is in French and explains that no refund is due because the 3.20 EUR is a foreign-exchange fee on a card payment in another currency.",
+          "threshold": 0.6
+        }
+      ]
+    },
+    {
+      "id": "single-charge-refund",
+      "input": {
+        "message": "I want my money back for the Atelier Mode purchase of 79 EUR, I changed my mind. __NAME__",
+        "signed_in_customer": "CUS-1005"
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "action_taken",
+              "refund_reference"
+            ],
+            "properties": {
+              "action_taken": {
+                "const": "no_refund"
+              },
+              "refund_reference": {
+                "const": ""
+              }
+            }
+          }
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The reply explains, politely, that the bank does not refund a single, authorised purchase and that a change of mind is for the merchant to handle. No refund is promised.",
+          "threshold": 0.6
+        }
+      ]
+    }
+  ]
+}

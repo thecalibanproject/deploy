@@ -1,0 +1,19 @@
+# Cedar Bank's quotas: append to the rendered caliban.toml of the shared stack (core reads [limits]
+# from the config file at start, so the gateway restarts once to apply them). Core README,
+# "Config file": requests_per_minute, key_requests_per_minute, tokens_per_minute, tokens_per_day and
+# usd_per_day, per tenant. The tenant id must match FINTECH_TENANT (default cedar-bank).
+#
+# key_requests_per_minute: a GCRA rate for each API key of the tenant (a burst of 120, then two
+#   requests a second). The scenario's burst of 130 FAQ requests on the faq-widget key gets 429s with
+#   retry-after. Evals run as the tenant's eval key under the same rate (their throttled calls sleep
+#   until retry-after, at most five times a step), so it stays above what an eval sends.
+# tokens_per_minute: each request reserves its prompt estimate plus max_tokens, settled to the
+#   tokens the model really used. Two concurrent probes of max_tokens 31000 do not fit together in
+#   60000; one after the other they do, because the first one's unused reservation is refunded. The
+#   budget stays well above what the evals use (their throttled calls wait, at most five times).
+# tokens_per_day, usd_per_day: daily budgets, far above what the scenario uses.
+[limits.tenants.cedar-bank]
+key_requests_per_minute = 120
+tokens_per_minute = 60000
+tokens_per_day = 5000000
+usd_per_day = 25.0

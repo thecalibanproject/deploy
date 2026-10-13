@@ -1,0 +1,111 @@
+{
+  "_comment": "The tenant's own personal-data detectors (core README, PII; research note 05 section 1: tenant dictionaries compiled from the data layer). NATIONAL_ID: the synthetic Lebanese-style ID of the seed (LB-dddd-dddd-d), which no built-in detector knows. The dictionary: every first and family name of the people in the practice database, one whole-word term each (lib/dataset.py person_terms). No term may equal a word of the tenant's name: the guard also pseudonymises the datasource tool's arguments, which carry the ontology version <tenant>@<n> (see README, gaps), so names are protected without the NER tier and a family name alone gets the same surrogate as in a full name. E-mail addresses, French and Lebanese phone numbers and the French NIR are built in.",
+  "pii_patterns": [
+    {
+      "label": "NATIONAL_ID",
+      "pattern": "\\bLB-\\d{4}-\\d{4}-\\d\\b"
+    }
+  ],
+  "pii_dictionary": [
+    {
+      "term": "Azar",
+      "label": "PERSON"
+    },
+    {
+      "term": "Aziz",
+      "label": "PERSON"
+    },
+    {
+      "term": "Azoury",
+      "label": "PERSON"
+    },
+    {
+      "term": "Camille",
+      "label": "PERSON"
+    },
+    {
+      "term": "Delorme",
+      "label": "PERSON"
+    },
+    {
+      "term": "Elias",
+      "label": "PERSON"
+    },
+    {
+      "term": "Fadi",
+      "label": "PERSON"
+    },
+    {
+      "term": "Georges",
+      "label": "PERSON"
+    },
+    {
+      "term": "Hélène",
+      "label": "PERSON"
+    },
+    {
+      "term": "Julien",
+      "label": "PERSON"
+    },
+    {
+      "term": "Karim",
+      "label": "PERSON"
+    },
+    {
+      "term": "Khoury",
+      "label": "PERSON"
+    },
+    {
+      "term": "Lina",
+      "label": "PERSON"
+    },
+    {
+      "term": "Marchetti",
+      "label": "PERSON"
+    },
+    {
+      "term": "Martin",
+      "label": "PERSON"
+    },
+    {
+      "term": "Martin-Aziz",
+      "label": "PERSON"
+    },
+    {
+      "term": "Maya",
+      "label": "PERSON"
+    },
+    {
+      "term": "Nassar",
+      "label": "PERSON"
+    },
+    {
+      "term": "Nour",
+      "label": "PERSON"
+    },
+    {
+      "term": "Rita",
+      "label": "PERSON"
+    },
+    {
+      "term": "Rousseau",
+      "label": "PERSON"
+    },
+    {
+      "term": "Saadé",
+      "label": "PERSON"
+    },
+    {
+      "term": "Sarkis",
+      "label": "PERSON"
+    },
+    {
+      "term": "Sophie",
+      "label": "PERSON"
+    },
+    {
+      "term": "Tannous",
+      "label": "PERSON"
+    }
+  ]
+}

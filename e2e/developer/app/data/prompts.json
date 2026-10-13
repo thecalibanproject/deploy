@@ -1,0 +1,20 @@
+{
+  "_comment": "What the support app's users send. expected: the intent a human would pick; other means none of ours.",
+  "prompts": [
+    {"lang": "en", "expected": "billing", "text": "Hi, I was charged twice for the Pro plan this month, can you fix it?"},
+    {"lang": "fr", "expected": "billing", "text": "Pouvez-vous m'envoyer la facture de septembre avec notre numéro de TVA ?"},
+    {"lang": "ar", "expected": "billing", "text": "تم خصم قيمة الاشتراك مرتين من بطاقتي هذا الشهر"},
+    {"lang": "en", "expected": "bug_report", "text": "The export button crashes the app every time I click it"},
+    {"lang": "fr", "expected": "bug_report", "text": "L'application plante dès que j'ouvre un tableau partagé"},
+    {"lang": "ar", "expected": "bug_report", "text": "يتعطل التطبيق عند فتح لوحة مشتركة"},
+    {"lang": "en", "expected": "how_to", "text": "How do I set up SAML single sign-on for our workspace?"},
+    {"lang": "fr", "expected": "how_to", "text": "Comment exporter un rapport en CSV chaque semaine ?"},
+    {"lang": "ar", "expected": "how_to", "text": "كيف أدعو عضوًا جديدًا إلى مساحة العمل؟"},
+    {"lang": "en", "expected": "account_security", "text": "Someone reset my password last night and it wasn't me"},
+    {"lang": "fr", "expected": "account_security", "text": "Quelqu'un s'est connecté à mon compte depuis un autre pays"},
+    {"lang": "ar", "expected": "account_security", "text": "وصلني رمز تحقق لم أطلبه، هل تم اختراق حسابي؟"},
+    {"lang": "en", "expected": "sales", "text": "We need 40 more seats for the team before Monday, is there a volume discount?"},
+    {"lang": "fr", "expected": "sales", "text": "Nous voulons ajouter 60 sièges pour l'équipe support, quelle remise ?"},
+    {"lang": "en", "expected": "other", "text": "Write a haiku about autumn leaves"}
+  ]
+}

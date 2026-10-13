@@ -101,6 +101,55 @@ here.
 Keep the report: copy `e2e/health-triage/.work/report-*.md` and `results-*.json` to the testbed
 bucket's `results/` prefix (with `results_upload = true`) or paste them from the session.
 
+## 3b. The recorded product demo (optional)
+
+`e2e/demo/run-demo.sh` records the product the way a customer sees it (e2e/demo/README.md): the
+gateway host in a terminal, then an operator who sets the scenario up in the web console, the
+client requests, what the console shows of each, the checks, and the timing telemetry. For health
+triage the console walkthrough replaces `e2e.sh setup`: it writes the same `.work/state.json`, and
+the recorded check is `e2e.sh run` (lib/run.py), which must pass exactly as after the API setup.
+That is the proof that the console setup is equivalent.
+
+Run it on a fresh tenant: right after the first `e2e.sh up`, before any `e2e.sh setup` (a stack set
+up through the API shows its existing objects instead of creating them). `run-demo.sh all` records
+`e2e.sh up` itself, which is quick when the stack is already up.
+
+```sh
+sudo -i
+cd "$CALIBAN_DEPLOY_DIR"
+export E2E_TARGET=testbed                    # E2E_RAG=1 adds the retrieval chapter and G1 to G4
+e2e/health-triage/e2e.sh up                  # once, if not done yet
+e2e/demo/run-demo.sh all                     # or: e2e/demo/run-demo.sh health-triage
+ls e2e/health-triage/.work/demo/             # caliban-demo.mp4, health-triage.mp4, telemetry.md, ...
+DEMO_UPLOAD=1 e2e/demo/run-demo.sh upload    # copy to s3://$CALIBAN_TESTBED_BUCKET/results/demo-<time>/
+```
+
+Single steps: `run-demo.sh pull | fonts | infra | seed | record | check | cards | stitch | upload`,
+the last five with scenario names. `DEMO_PACE` (default 1) scales the viewer pauses,
+`DEMO_SLOWMO_MS` (120) slows every browser action, `DEMO_MAX_IDLE_S` (10) is the longest wait the
+stitch keeps whole (evals, indexing).
+
+The gateway pulls three more images (`run-demo.sh pull`; for the zero-egress scenario, add them to
+the bundle):
+
+| Image | Use |
+|---|---|
+| `mcr.microsoft.com/playwright/python:v1.63.0-noble` | Chromium and Python Playwright: the console recordings and the cards |
+| `ghcr.io/asciinema/agg:1.9.0` | The terminal recordings, asciicast to GIF (amd64 only: on the arm64 gateway, `DEMO_AGG=<path>` to the release's `agg-aarch64-unknown-linux-gnu`, sha256 `2b4be407b97e00e1c313a41d154ced8fa3d02c560c8f47a0db4950a2576444c9`, and the image is not pulled) |
+| `jrottenberg/ffmpeg:8.0.3-ubuntu2404` | MP4 encoding, cuts, concatenation, chapter markers |
+
+Outputs, in `e2e/health-triage/.work/demo/`: `caliban-demo.mp4` (everything, with chapter
+markers), `<scenario>.mp4`, `<scenario>.webm` and `<scenario>.timeline.json` (chapters and long
+waits in seconds, and the steps done through the admin API because the console has no page for
+them), `shots/<scenario>/`, `term/*.cast` (replayable) and `term/*.mp4`, `<scenario>-telemetry.jsonl`,
+`telemetry.md` and `telemetry.csv`. With `results_upload = true`, `upload` copies them (not the
+intermediate parts) with the e2e report to the bucket's `results/` prefix.
+
+The browser runs in the Playwright container on the host network and reaches the console and the
+data plane at `E2E_CP_URL` and `E2E_ROUTER_URL`; it gets the e2e's environment except the MongoDB
+root credentials and key file. The key the console mints is blurred in the recording, the admin
+token and the MongoDB password are typed into password fields.
+
 ## 4. Clean up
 
 ```sh

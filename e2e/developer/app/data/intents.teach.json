@@ -1,0 +1,15 @@
+{
+  "_comment": "Exemplars added at runtime after the first pass: growing a team is a sales conversation, not a billing one.",
+  "intents": {
+    "sales": [
+      "we need more seats for our growing team",
+      "can we get a volume discount for 50 more seats",
+      "we want to add 40 seats before next week",
+      "pricing for adding a whole department",
+      "nous voulons ajouter des sièges pour toute l'équipe",
+      "remise sur volume pour 100 sièges supplémentaires",
+      "نحتاج إلى مقاعد إضافية لفريقنا",
+      "هل يوجد خصم على عدد كبير من المقاعد"
+    ]
+  }
+}

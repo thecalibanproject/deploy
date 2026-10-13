@@ -1,0 +1,1055 @@
+{
+ "_comment": "The curated Caliban Semantic Model of the law firm's practice database (MongoDB `lawfirm`), proposed over introspection's elements by the demo and approved in one review batch. Ids are what node queries name. The policy denies the national identifiers to every query.",
+ "datasource": "practice",
+ "elements": [
+  {
+   "id": "Client",
+   "name": "Client",
+   "description": "A client of the firm (an individual or a company)",
+   "synonyms": [
+    "client",
+    "mandant",
+    "customer"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "root",
+     "datasource": "practice",
+     "collection": "clients"
+    },
+    "keys": [
+     "_id"
+    ]
+   }
+  },
+  {
+   "id": "Client.client_code",
+   "name": "Client.client_code",
+   "description": "Client reference (CLI-nnn)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "_id",
+    "column": "client_code",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Client.client_name",
+   "name": "Client.client_name",
+   "description": "Name of the client (a person's name is personal data)",
+   "synonyms": [
+    "nom du client"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "name",
+    "column": "client_name",
+    "data_type": "string",
+    "pii_class": "person"
+   }
+  },
+  {
+   "id": "Client.client_type",
+   "name": "Client.client_type",
+   "description": "individual or company",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "type",
+    "column": "client_type",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Client.client_office",
+   "name": "Client.client_office",
+   "description": "Office that holds the relationship (beirut, paris)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "office",
+    "column": "client_office",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Client.client_language",
+   "name": "Client.client_language",
+   "description": "Language the client is served in",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "language",
+    "column": "client_language",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Client.client_email",
+   "name": "Client.client_email",
+   "description": "Client's contact e-mail address",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "email",
+    "column": "client_email",
+    "data_type": "string",
+    "pii_class": "email"
+   }
+  },
+  {
+   "id": "Client.client_phone",
+   "name": "Client.client_phone",
+   "description": "Client's contact phone number",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "phone",
+    "column": "client_phone",
+    "data_type": "string",
+    "pii_class": "phone"
+   }
+  },
+  {
+   "id": "Client.national_id",
+   "name": "Client.national_id",
+   "description": "Lebanese national ID of an individual client",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "national_id",
+    "column": "national_id",
+    "data_type": "string",
+    "pii_class": "national_id"
+   }
+  },
+  {
+   "id": "Client.nir",
+   "name": "Client.nir",
+   "description": "French social security number (NIR) of an individual client",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "nir",
+    "column": "nir",
+    "data_type": "string",
+    "pii_class": "national_id"
+   }
+  },
+  {
+   "id": "Client.kyc_status",
+   "name": "Client.kyc_status",
+   "description": "Know-your-client check: verified or pending",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Client",
+    "path": "kyc_status",
+    "column": "kyc_status",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter",
+   "name": "Matter",
+   "description": "A matter (dossier) the firm handles for a client",
+   "synonyms": [
+    "dossier",
+    "affaire",
+    "case",
+    "file"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "root",
+     "datasource": "practice",
+     "collection": "matters"
+    },
+    "keys": [
+     "_id"
+    ]
+   }
+  },
+  {
+   "id": "Matter.matter_ref",
+   "name": "Matter.matter_ref",
+   "description": "Matter reference (HAD-yyyy-nnn)",
+   "synonyms": [
+    "référence du dossier"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "_id",
+    "column": "matter_ref",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.matter_title",
+   "name": "Matter.matter_title",
+   "description": "Short title of the matter",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "title",
+    "column": "matter_title",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.matter_type",
+   "name": "Matter.matter_type",
+   "description": "inheritance, real_estate, commercial_litigation, employment, arbitration, intellectual_property",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "type",
+    "column": "matter_type",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.matter_status",
+   "name": "Matter.matter_status",
+   "description": "open, on_hold or closed",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "status",
+    "column": "matter_status",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.matter_stage",
+   "name": "Matter.matter_stage",
+   "description": "Procedural stage, in French",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "stage",
+    "column": "matter_stage",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.matter_office",
+   "name": "Matter.matter_office",
+   "description": "Office in charge (beirut, paris)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "office",
+    "column": "matter_office",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.responsible_lawyer",
+   "name": "Matter.responsible_lawyer",
+   "description": "Lawyer responsible for the matter",
+   "synonyms": [
+    "avocat responsable"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "responsible_lawyer",
+    "column": "responsible_lawyer",
+    "data_type": "string",
+    "pii_class": "person"
+   }
+  },
+  {
+   "id": "Matter.jurisdiction",
+   "name": "Matter.jurisdiction",
+   "description": "Court or forum",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "jurisdiction",
+    "column": "jurisdiction",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.fee_arrangement",
+   "name": "Matter.fee_arrangement",
+   "description": "hourly, fixed or capped fees",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "fee_arrangement",
+    "column": "fee_arrangement",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.matter_client_id",
+   "name": "Matter.matter_client_id",
+   "description": "Reference of the client (CLI-nnn)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "client_id",
+    "column": "matter_client_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Matter.opened_at",
+   "name": "Matter.opened_at",
+   "description": "When the matter was opened",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Matter",
+    "path": "opened_at",
+    "column": "opened_at",
+    "data_type": "timestamp"
+   }
+  },
+  {
+   "id": "Deadline",
+   "name": "Deadline",
+   "description": "A procedural or contractual deadline of a matter",
+   "synonyms": [
+    "délai",
+    "échéance",
+    "deadline"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "embedded",
+     "parent": "Matter",
+     "array_path": "deadlines"
+    },
+    "keys": []
+   }
+  },
+  {
+   "id": "Deadline.deadline_kind",
+   "name": "Deadline.deadline_kind",
+   "description": "filing, hearing, letter, notice, tax, advice",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Deadline",
+    "path": "kind",
+    "column": "deadline_kind",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Deadline.deadline_label",
+   "name": "Deadline.deadline_label",
+   "description": "What is due, in French",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Deadline",
+    "path": "label",
+    "column": "deadline_label",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Deadline.due_at",
+   "name": "Deadline.due_at",
+   "description": "Due date (UTC)",
+   "synonyms": [
+    "date limite"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Deadline",
+    "path": "due_at",
+    "column": "due_at",
+    "data_type": "timestamp"
+   }
+  },
+  {
+   "id": "Deadline.deadline_status",
+   "name": "Deadline.deadline_status",
+   "description": "open or done",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Deadline",
+    "path": "status",
+    "column": "deadline_status",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Deadline.court",
+   "name": "Deadline.court",
+   "description": "Court the deadline is set by, if any",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Deadline",
+    "path": "court",
+    "column": "court",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Party",
+   "name": "Party",
+   "description": "A party to a matter: the client, an adverse party, a counterparty or a third party",
+   "synonyms": [
+    "partie",
+    "party"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "embedded",
+     "parent": "Matter",
+     "array_path": "parties"
+    },
+    "keys": []
+   }
+  },
+  {
+   "id": "Party.party_name",
+   "name": "Party.party_name",
+   "description": "Name of the party (a person's name is personal data)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Party",
+    "path": "name",
+    "column": "party_name",
+    "data_type": "string",
+    "pii_class": "person"
+   }
+  },
+  {
+   "id": "Party.party_role",
+   "name": "Party.party_role",
+   "description": "client, adverse, counterparty or third_party",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Party",
+    "path": "role",
+    "column": "party_role",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "Party.party_kind",
+   "name": "Party.party_kind",
+   "description": "person or company",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "Party",
+    "path": "kind",
+    "column": "party_kind",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "TimeEntry",
+   "name": "TimeEntry",
+   "description": "Billable time recorded on a matter",
+   "synonyms": [
+    "temps passé",
+    "time entry",
+    "diligence"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "entity",
+   "spec": {
+    "binding": {
+     "type": "root",
+     "datasource": "practice",
+     "collection": "time_entries"
+    },
+    "keys": [
+     "_id"
+    ]
+   }
+  },
+  {
+   "id": "TimeEntry.entry_id",
+   "name": "TimeEntry.entry_id",
+   "description": "Time entry reference",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "_id",
+    "column": "entry_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "TimeEntry.entry_matter_id",
+   "name": "TimeEntry.entry_matter_id",
+   "description": "Reference of the matter",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "matter_id",
+    "column": "entry_matter_id",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "TimeEntry.entry_lawyer",
+   "name": "TimeEntry.entry_lawyer",
+   "description": "Lawyer who did the work",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "lawyer",
+    "column": "entry_lawyer",
+    "data_type": "string",
+    "pii_class": "person"
+   }
+  },
+  {
+   "id": "TimeEntry.entry_office",
+   "name": "TimeEntry.entry_office",
+   "description": "Office of that lawyer",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "office",
+    "column": "entry_office",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "TimeEntry.worked_on",
+   "name": "TimeEntry.worked_on",
+   "description": "Day the work was done",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "worked_on",
+    "column": "worked_on",
+    "data_type": "timestamp"
+   }
+  },
+  {
+   "id": "TimeEntry.hours",
+   "name": "TimeEntry.hours",
+   "description": "Hours worked",
+   "synonyms": [
+    "heures"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "hours",
+    "column": "hours",
+    "data_type": "number"
+   }
+  },
+  {
+   "id": "TimeEntry.rate",
+   "name": "TimeEntry.rate",
+   "description": "Hourly rate",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "rate",
+    "column": "rate",
+    "data_type": "number"
+   }
+  },
+  {
+   "id": "TimeEntry.amount",
+   "name": "TimeEntry.amount",
+   "description": "hours x rate, in the entry's currency",
+   "synonyms": [
+    "honoraires",
+    "fees"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "amount",
+    "column": "amount",
+    "data_type": "number"
+   }
+  },
+  {
+   "id": "TimeEntry.entry_currency",
+   "name": "TimeEntry.entry_currency",
+   "description": "USD (Beirut) or EUR (Paris)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "currency",
+    "column": "entry_currency",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "TimeEntry.activity",
+   "name": "TimeEntry.activity",
+   "description": "What was done, in French",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "activity",
+    "column": "activity",
+    "data_type": "string"
+   }
+  },
+  {
+   "id": "TimeEntry.billed",
+   "name": "TimeEntry.billed",
+   "description": "Whether the entry has been invoiced",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "attribute",
+   "spec": {
+    "entity": "TimeEntry",
+    "path": "billed",
+    "column": "billed",
+    "data_type": "bool"
+   }
+  },
+  {
+   "id": "rel.matter_client",
+   "name": "rel.matter_client",
+   "description": "Each matter belongs to one client (matters.client_id -> clients._id)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "relation",
+   "spec": {
+    "from": "Matter",
+    "to": "Client",
+    "cardinality": "many_to_one",
+    "local_path": "client_id",
+    "local_column": "matter_client_id",
+    "foreign_path": "_id",
+    "foreign_column": "client_code",
+    "verified": true,
+    "foreign_indexed": true
+   }
+  },
+  {
+   "id": "rel.entry_matter",
+   "name": "rel.entry_matter",
+   "description": "Each time entry is recorded on one matter (time_entries.matter_id -> matters._id)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "relation",
+   "spec": {
+    "from": "TimeEntry",
+    "to": "Matter",
+    "cardinality": "many_to_one",
+    "local_path": "matter_id",
+    "local_column": "entry_matter_id",
+    "foreign_path": "_id",
+    "foreign_column": "matter_ref",
+    "verified": true,
+    "foreign_indexed": true
+   }
+  },
+  {
+   "id": "matter_count",
+   "name": "matter_count",
+   "description": "Number of matters",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "metric",
+   "spec": {
+    "grain": "Matter",
+    "aggregation": "count",
+    "expr": {
+     "op": "rows"
+    }
+   }
+  },
+  {
+   "id": "open_deadlines",
+   "name": "open_deadlines",
+   "description": "Deadlines still to meet",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "metric",
+   "spec": {
+    "grain": "Deadline",
+    "aggregation": "count",
+    "expr": {
+     "op": "rows"
+    },
+    "filters": [
+     {
+      "attr": "Deadline.deadline_status",
+      "op": "eq",
+      "value": {
+       "type": "string",
+       "v": "open"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "party_count",
+   "name": "party_count",
+   "description": "Number of party appearances",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "metric",
+   "spec": {
+    "grain": "Party",
+    "aggregation": "count",
+    "expr": {
+     "op": "rows"
+    }
+   }
+  },
+  {
+   "id": "hours_logged",
+   "name": "hours_logged",
+   "description": "Hours recorded",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "metric",
+   "spec": {
+    "grain": "TimeEntry",
+    "aggregation": "sum",
+    "expr": {
+     "op": "attr",
+     "id": "TimeEntry.hours"
+    }
+   }
+  },
+  {
+   "id": "fees_recorded",
+   "name": "fees_recorded",
+   "description": "Fees recorded (hours x rate)",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "metric",
+   "spec": {
+    "grain": "TimeEntry",
+    "aggregation": "sum",
+    "expr": {
+     "op": "attr",
+     "id": "TimeEntry.amount"
+    }
+   }
+  },
+  {
+   "id": "unbilled_fees",
+   "name": "unbilled_fees",
+   "description": "Fees recorded but not invoiced yet (work in progress)",
+   "synonyms": [
+    "encours",
+    "WIP"
+   ],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "metric",
+   "spec": {
+    "grain": "TimeEntry",
+    "aggregation": "sum",
+    "expr": {
+     "op": "attr",
+     "id": "TimeEntry.amount"
+    },
+    "filters": [
+     {
+      "attr": "TimeEntry.billed",
+      "op": "eq",
+      "value": {
+       "type": "bool",
+       "v": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "unbilled_hours",
+   "name": "unbilled_hours",
+   "description": "Hours recorded but not invoiced yet",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "metric",
+   "spec": {
+    "grain": "TimeEntry",
+    "aggregation": "sum",
+    "expr": {
+     "op": "attr",
+     "id": "TimeEntry.hours"
+    },
+    "filters": [
+     {
+      "attr": "TimeEntry.billed",
+      "op": "eq",
+      "value": {
+       "type": "bool",
+       "v": false
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "policy.client_identifiers",
+   "name": "policy.client_identifiers",
+   "description": "National identifiers of clients are never queried by nodes: the compiler refuses any query that names them",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "policy",
+   "spec": {
+    "entity": "Client",
+    "row_filter": null,
+    "denied_attributes": [
+     "Client.national_id",
+     "Client.nir"
+    ]
+   }
+  },
+  {
+   "id": "glossary.dossier",
+   "name": "glossary.dossier",
+   "description": "'dossier' (French) means a matter",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "glossary_term",
+   "spec": {
+    "phrase": "dossier",
+    "maps_to": "Matter.matter_ref"
+   }
+  },
+  {
+   "id": "glossary.echeance",
+   "name": "glossary.echeance",
+   "description": "'échéance' means a deadline's due date",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "glossary_term",
+   "spec": {
+    "phrase": "échéance",
+    "maps_to": "Deadline.due_at"
+   }
+  },
+  {
+   "id": "glossary.wip",
+   "name": "glossary.wip",
+   "description": "'encours' (work in progress) means time recorded and not billed",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "glossary_term",
+   "spec": {
+    "phrase": "encours",
+    "maps_to": "TimeEntry.billed"
+   }
+  },
+  {
+   "id": "glossary.conflict_check",
+   "name": "glossary.conflict_check",
+   "description": "A conflict check compares a name with every party of every matter, open or closed",
+   "synonyms": [],
+   "status": "proposed",
+   "provenance": "human",
+   "confidence": 1.0,
+   "kind": "glossary_term",
+   "spec": {
+    "phrase": "conflict check",
+    "maps_to": "Party.party_name"
+   }
+  }
+ ]
+}

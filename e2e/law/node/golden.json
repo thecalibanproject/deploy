@@ -1,0 +1,238 @@
+{
+  "cases": [
+    {
+      "id": "fr-deadlines-delorme",
+      "tags": [
+        "fr",
+        "deadlines"
+      ],
+      "input": {
+        "question": "Quelles sont les prochaines échéances dans le dossier Maison Delorme ?"
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "answer",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "deadlines"
+              }
+            }
+          }
+        },
+        {
+          "type": "contains",
+          "value": [
+            "HAD-2026-007"
+          ]
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The answer lists the upcoming deadlines of the Maison Delorme matter with their dates, from the rows only, in French.",
+          "threshold": 0.6
+        }
+      ]
+    },
+    {
+      "id": "en-deadlines-cedar",
+      "tags": [
+        "en",
+        "deadlines"
+      ],
+      "input": {
+        "question": "What is due next in the Cedar Logistics arbitration?"
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "answer",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "deadlines"
+              }
+            }
+          }
+        },
+        {
+          "type": "contains",
+          "value": [
+            "HAD-2025-112"
+          ]
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The answer names the next deadlines of the Cedar Logistics arbitration with their dates, in English.",
+          "threshold": 0.6
+        }
+      ]
+    },
+    {
+      "id": "fr-billing-succession",
+      "tags": [
+        "fr",
+        "billing"
+      ],
+      "input": {
+        "question": "Combien d'heures ont été passées sur la succession Khoury et que reste-t-il à facturer ?"
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "answer",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "billing"
+              }
+            }
+          }
+        },
+        {
+          "type": "contains",
+          "value": [
+            "HAD-2026-014"
+          ]
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The answer gives the hours and fees of the inheritance matter, split between billed and not billed, in French.",
+          "threshold": 0.6
+        }
+      ]
+    },
+    {
+      "id": "en-conflict-medco",
+      "tags": [
+        "en",
+        "conflict_check"
+      ],
+      "input": {
+        "question": "Conflict check: Medco Trading SAL wants to instruct us in a new dispute. Is there a conflict?"
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "answer",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "conflict_check"
+              },
+              "conflict": {
+                "enum": [
+                  "conflict",
+                  "possible"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "contains",
+          "value": [
+            "HAD-2026-021"
+          ]
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The answer says there is a conflict because Medco Trading SAL is an adverse party in a matter of the firm, and names that matter.",
+          "threshold": 0.6
+        }
+      ]
+    },
+    {
+      "id": "fr-research-prescription",
+      "tags": [
+        "fr",
+        "research"
+      ],
+      "input": {
+        "question": "Quel est le délai de prescription de droit commun en droit français ? Cite la source."
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "answer",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "legal_research"
+              }
+            }
+          }
+        },
+        {
+          "type": "contains",
+          "value": [
+            "fr-code-civil-prescription"
+          ]
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The answer says the general limitation period is five years from when the facts were known, and cites a passage with [n].",
+          "threshold": 0.6
+        }
+      ]
+    },
+    {
+      "id": "en-research-conflict-policy",
+      "tags": [
+        "en",
+        "research"
+      ],
+      "input": {
+        "question": "According to our firm policy, what counts as a direct conflict of interest?"
+      },
+      "checks": [
+        {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "required": [
+              "answer",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "legal_research"
+              }
+            }
+          }
+        },
+        {
+          "type": "contains",
+          "value": [
+            "policy-conflicts-en"
+          ]
+        },
+        {
+          "type": "llm_judge",
+          "rubric": "The answer explains, from the firm policy, that a direct conflict exists when the opponent is a current client or the prospective client is an adverse party, with a citation.",
+          "threshold": 0.6
+        }
+      ]
+    }
+  ]
+}

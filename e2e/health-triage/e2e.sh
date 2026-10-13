@@ -8,6 +8,7 @@
 #   e2e/health-triage/e2e.sh all      # up, setup, run
 #   e2e/health-triage/e2e.sh down     # remove what `up` created (containers, volumes, work dir)
 #   e2e/health-triage/e2e.sh status | logs [service]
+#   e2e/health-triage/e2e.sh exec COMMAND...   # COMMAND with the e2e's environment (the demo runner)
 #
 # E2E_TARGET=local (default): its own compose project `caliban-e2e` from compose/docker-compose.yml,
 #   the scripted model, no GPU. Secrets are generated into the work directory.
@@ -95,10 +96,19 @@ export E2E_ASSESS_REASONING E2E_RECOMMEND_REASONING
 [[ -n "${E2E_MAX_P95_MS:-}" ]] && export E2E_MAX_P95_MS
 [[ -n "${E2E_EVAL_TIMEOUT_S:-}" ]] && export E2E_EVAL_TIMEOUT_S
 
-FILES=(-f "$DEPLOY_DIR/compose/docker-compose.yml")
-[[ -n "$E2E_EXTRA_COMPOSE" ]] && FILES+=(-f "$E2E_EXTRA_COMPOSE")
+# E2E_EXTRA_COMPOSE: overlays between the stack's file and the e2e's, separated by colons or spaces
+# (the testbed gateway's file, then any scenario overlays).
+EXTRA_FILES=()
+for f in ${E2E_EXTRA_COMPOSE//:/ }; do EXTRA_FILES+=(-f "$f"); done
+FILES=(-f "$DEPLOY_DIR/compose/docker-compose.yml" "${EXTRA_FILES[@]}")
 FILES+=(-f "$E2E_DIR/docker-compose.e2e.yml")
 E2E_SERVICES=(caliban-e2e-mongo caliban-e2e-mongo-analytics caliban-e2e-model)
+# E2E_EXTRA_SERVICES: services of those overlays started and removed with the e2e's own on the
+# testbed (locally `up` starts every service of the project). E2E_EXTRA_CONFIG: TOML files appended
+# to the rendered caliban.toml. E2E_WORK_SUBDIRS: directories created in the work directory before
+# `up`, so that a bind mount does not create them owned by root. e2e/demo/stack.sh sets all four
+# for the recorded demo's scenarios.
+for s in ${E2E_EXTRA_SERVICES//:/ }; do E2E_SERVICES+=("$s"); done
 
 dc() { docker compose -p "$E2E_PROJECT" --env-file "$E2E_STACK_ENV" "${FILES[@]}" "$@"; }
 envval() { sed -n "s/^$1=//p" "$E2E_STACK_ENV" | tail -n 1; }
@@ -107,6 +117,8 @@ envval() { sed -n "s/^$1=//p" "$E2E_STACK_ENV" | tail -n 1; }
 
 secrets() {
   mkdir -p "$E2E_WORK_DIR/model-log"
+  local sub
+  for sub in ${E2E_WORK_SUBDIRS:-}; do mkdir -p "$E2E_WORK_DIR/$sub"; done
   chmod 700 "$E2E_WORK_DIR"
   if [[ "$E2E_TARGET" == local && ! -f "$E2E_STACK_ENV" ]]; then
     log "generating local stack secrets in $E2E_STACK_ENV"
@@ -188,6 +200,13 @@ EOF
     esac
     echo "auto_price_in_per_mtok = 3.0"
     echo "auto_price_out_per_mtok = 12.0"
+    local extra
+    for extra in ${E2E_EXTRA_CONFIG//:/ }; do
+      [[ -f "$extra" ]] || die "E2E_EXTRA_CONFIG: $extra not found"
+      echo
+      echo "# ───────────── appended from $extra ─────────────"
+      cat "$extra"
+    done
     if [[ "$E2E_ROUTING_PRESET" == mock ]]; then
       cat <<'EOF'
 
@@ -271,8 +290,7 @@ down() {
     dc rm -s -f -v "${E2E_SERVICES[@]}"
     docker volume rm caliban-e2e-mongo-data caliban-e2e-mongo-analytics-data 2>/dev/null || true
     docker network rm caliban-e2e-out 2>/dev/null || true
-    local base=(-f "$DEPLOY_DIR/compose/docker-compose.yml")
-    [[ -n "$E2E_EXTRA_COMPOSE" ]] && base+=(-f "$E2E_EXTRA_COMPOSE")
+    local base=(-f "$DEPLOY_DIR/compose/docker-compose.yml" "${EXTRA_FILES[@]}")
     docker compose -p "$E2E_PROJECT" --env-file "$E2E_STACK_ENV" "${base[@]}" up -d --wait caliban
   fi
   rm -rf "$E2E_WORK_DIR"
@@ -288,6 +306,7 @@ case "$cmd" in
   down) down ;;
   status) secrets; dc ps ;;
   logs) secrets; dc logs --no-color --tail "${TAIL:-200}" "$@" ;;
-  ""|-h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) die "unknown command '$cmd' (up | setup | run | all | down | status | logs)" ;;
+  exec) [[ $# -gt 0 ]] || die "exec needs a command"; secrets; export E2E_DEPLOY_DIR="$DEPLOY_DIR"; exec "$@" ;;
+  ""|-h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$cmd' (up | setup | run | all | down | status | logs | exec)" ;;
 esac
