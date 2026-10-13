@@ -379,10 +379,11 @@ class Ctx:
         return d
 
     # Data plane, with telemetry.
-    def gateway(self, path, json=None, api_key=None, headers=None, timeout=900, label=None):
+    def gateway(self, path, json=None, api_key=None, headers=None, timeout=900, label=None, record=True):
         """A data-plane call: (status, headers, body). Always timed (client side) and recorded in
         <scenario>-telemetry.jsonl with the gateway's Server-Timing stages when present; for a node
-        run that ended, its steps' durations are fetched and recorded too."""
+        run that ended, its steps' durations are fetched and recorded too. record=False leaves a
+        call out of the telemetry (a load burst that would drown the per-request table)."""
         status, hdrs, body, client = _timed_http("GET" if json is None else "POST", ROUTER_URL + path, api_key, json,
                                                  headers, timeout)
         server = telemetry.parse_server_timing(hdrs.get("server-timing"))
@@ -395,7 +396,7 @@ class Ctx:
                "routed_model": hdrs.get("x-caliban-routed-model"), "cache": hdrs.get("x-caliban-cache"),
                "run_id": run_id, "client": client, "server": server}
         self.last_timing = {"client": client, "server": server}
-        if json is not None or not path.startswith("/v1/runs/"):
+        if record and (json is not None or not path.startswith("/v1/runs/")):
             telemetry.append(self.scenario, rec)
             if run_id and api_key:
                 run = self._run(run_id, api_key)

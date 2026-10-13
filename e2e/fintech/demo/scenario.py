@@ -110,12 +110,16 @@ def body_for(template):
     return b
 
 
-def call(ctx, label, path, body, key, headers=None, timeout=900):
-    """A labelled data-plane call: (status, headers, body, wall_ms). Recorded in the state file."""
+def call(ctx, label, path, body, key, headers=None, timeout=900, record=True):
+    """A labelled data-plane call: (status, headers, body, wall_ms). Recorded in the state file;
+    record=False keeps it out of the telemetry report (the rate-limit burst)."""
     kw = {}
     try:
-        if "label" in inspect.signature(ctx.gateway).parameters:
+        params = inspect.signature(ctx.gateway).parameters
+        if "label" in params:
             kw["label"] = label
+        if not record and "record" in params:
+            kw["record"] = False
     except (TypeError, ValueError):
         pass
     t0 = time.monotonic()
@@ -352,7 +356,7 @@ def keys_and_limits(ctx):
     panel(ctx, f"faq-widget: burst of {n}", body, None, None, None, pending=f"{n} requests in flight")
     with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
         results = list(pool.map(lambda i: call(ctx, f"burst {i + 1}/{n}", "/v1/chat/completions", body,
-                                               st["faq_key"]), range(n)))
+                                               st["faq_key"], record=False), range(n)))
     ok = [r for r in results if r[0] == 200]
     limited = [r for r in results if r[0] == 429]
     first = limited[0] if limited else None
